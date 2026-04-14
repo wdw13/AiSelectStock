@@ -6,14 +6,14 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-# Qt ×Ô¶¯´¦Àí moc / rcc / uic
+# Qt è‡ªåŠ¨å¤„ç† moc / rcc / uic
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
-set(CMAKE_AUTOUIC OFF)   # Äã²»ÓÃ .ui£¬¾Í¹Øµô
+set(CMAKE_AUTOUIC OFF)   # ä½ ä¸ç”¨ .uiï¼Œå°±å…³æ‰
 
-# ²éÕÒ Qt Widgets
+# æŸ¥æ‰¾ Qt Widgets
 find_package(QT NAMES Qt6 Qt5 REQUIRED COMPONENTS Widgets)
 find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Widgets)
 
-# Ìí¼Ó×ÓÄ¿Â¼
+# æ·»åŠ å­ç›®å½•
 add_subdirectory(src)

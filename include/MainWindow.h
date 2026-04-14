@@ -3,6 +3,7 @@
 #include <QFrame>
 #include <QWidget>
 #include <QString>
+#include <QPushButton>
 
 class TrendPreviewWidget : public QWidget
 {
@@ -32,6 +33,7 @@ protected:
     void mousePressEvent(QMouseEvent *event) override;
     void mouseMoveEvent(QMouseEvent *event) override;
     void mouseReleaseEvent(QMouseEvent *event) override;
+    bool eventFilter(QObject *watched, QEvent *event) override;
 
 private:
     QWidget* createSidebar();
@@ -40,7 +42,14 @@ private:
     QWidget* createChartPanel();
     QWidget* createResultPanel();
     void applyTheme();
+    void updateMaxButtonState();
 
+private:
     bool m_dragging = false;
     QPoint m_dragPosition;
+
+    QPushButton *m_minBtn = nullptr;
+    QPushButton *m_maxBtn = nullptr;
+    QPushButton *m_closeBtn = nullptr;
+    QWidget *m_topBar = nullptr;
 };

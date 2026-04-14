@@ -344,8 +344,8 @@ MainWindow::MainWindow(QWidget *parent)
     setWindowFlags(Qt::FramelessWindowHint | Qt::Window);
     setObjectName("MainWindow");
     setWindowTitle("aiselectstock");
-    resize(1480, 920);
-    setMinimumSize(1280, 780);
+    resize(1200, 760);
+    setMinimumSize(1000, 680);
     setAttribute(Qt::WA_StyledBackground, true);
 
     auto *mainLayout = new QHBoxLayout(this);
@@ -376,6 +376,7 @@ MainWindow::MainWindow(QWidget *parent)
     mainLayout->addWidget(contentArea, 1);
 
     applyTheme();
+    updateMaxButtonState();
 }
 
 QWidget* MainWindow::createSidebar()
@@ -459,6 +460,9 @@ QWidget* MainWindow::createTopBar()
     auto *topBar = new QWidget();
     topBar->setObjectName("TopBar");
 
+    m_topBar = topBar;
+    m_topBar->installEventFilter(this);
+
     auto *layout = new QHBoxLayout(topBar);
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(12);
@@ -471,33 +475,61 @@ QWidget* MainWindow::createTopBar()
     searchWrap->setMaximumWidth(660);
 
     auto *searchLayout = new QHBoxLayout(searchWrap);
-    searchLayout->setContentsMargins(14, 8, 8, 8);
+    searchLayout->setContentsMargins(14, 4, 4, 4);
     searchLayout->setSpacing(8);
 
     auto *searchEdit = new QLineEdit();
     searchEdit->setObjectName("SearchEdit");
     searchEdit->setPlaceholderText(QStringLiteral("输入股票名称 / 代码 "));
     searchEdit->setClearButtonEnabled(true);
+    searchEdit->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
 
     auto *searchBtn = new QPushButton(QStringLiteral("搜索"));
     searchBtn->setObjectName("SearchButton");
     searchBtn->setCursor(Qt::PointingHandCursor);
     searchBtn->setFixedWidth(110);
+    searchBtn->setMinimumHeight(44);
 
     searchLayout->addWidget(searchEdit, 1);
     searchLayout->addWidget(searchBtn);
 
-    auto *closeBtn = new QPushButton(QStringLiteral("×"));
-    closeBtn->setObjectName("CloseButton");
-    closeBtn->setCursor(Qt::PointingHandCursor);
-    closeBtn->setFixedSize(56, 56);
+    m_minBtn = new QPushButton(QStringLiteral("—"));
+    m_minBtn->setObjectName("TitleButton");
+    m_minBtn->setCursor(Qt::PointingHandCursor);
+    m_minBtn->setFixedSize(48, 48);
+    m_minBtn->setToolTip(QStringLiteral("最小化"));
 
-    connect(closeBtn, &QPushButton::clicked, this, &QWidget::close);
+    m_maxBtn = new QPushButton(QStringLiteral("□"));
+    m_maxBtn->setObjectName("TitleButton");
+    m_maxBtn->setCursor(Qt::PointingHandCursor);
+    m_maxBtn->setFixedSize(48, 48);
+    m_maxBtn->setToolTip(QStringLiteral("最大化"));
+
+    m_closeBtn = new QPushButton(QStringLiteral("×"));
+    m_closeBtn->setObjectName("CloseButton");
+    m_closeBtn->setCursor(Qt::PointingHandCursor);
+    m_closeBtn->setFixedSize(56, 56);
+    m_closeBtn->setToolTip(QStringLiteral("关闭"));
+
+    connect(m_minBtn, &QPushButton::clicked, this, &QWidget::showMinimized);
+
+    connect(m_maxBtn, &QPushButton::clicked, this, [this]() {
+        if (isMaximized()) {
+            showNormal();
+        } else {
+            showMaximized();
+        }
+        updateMaxButtonState();
+    });
+
+    connect(m_closeBtn, &QPushButton::clicked, this, &QWidget::close);
 
     layout->addStretch(1);
     layout->addWidget(searchWrap);
     layout->addStretch(1);
-    layout->addWidget(closeBtn);
+    layout->addWidget(m_minBtn);
+    layout->addWidget(m_maxBtn);
+    layout->addWidget(m_closeBtn);
 
     return topBar;
 }
@@ -699,6 +731,38 @@ void MainWindow::mouseReleaseEvent(QMouseEvent *event)
     QWidget::mouseReleaseEvent(event);
 }
 
+void MainWindow::updateMaxButtonState()
+{
+    if (!m_maxBtn) {
+        return;
+    }
+
+    if (isMaximized()) {
+        m_maxBtn->setText(QStringLiteral("❐"));
+        m_maxBtn->setToolTip(QStringLiteral("还原"));
+    } else {
+        m_maxBtn->setText(QStringLiteral("□"));
+        m_maxBtn->setToolTip(QStringLiteral("最大化"));
+    }
+}
+
+bool MainWindow::eventFilter(QObject *watched, QEvent *event)
+{
+    if (watched == m_topBar && event->type() == QEvent::MouseButtonDblClick) {
+        auto *mouseEvent = static_cast<QMouseEvent *>(event);
+        if (mouseEvent->button() == Qt::LeftButton) {
+            if (isMaximized()) {
+                showNormal();
+            } else {
+                showMaximized();
+            }
+            return true;
+        }
+    }
+
+    return QWidget::eventFilter(watched, event);
+}
+
 void MainWindow::applyTheme()
 {
     setStyleSheet(R"(
@@ -766,13 +830,32 @@ void MainWindow::applyTheme()
             background: #d62839;
             color: white;
             border: none;
-            border-radius: 14px;
-            padding: 0 20px;
+            border-top-right-radius: 14px;
+            border-bottom-right-radius: 14px;
+            border-top-left-radius: 10px;
+            border-bottom-left-radius: 10px;
+            padding: 0 22px;
             font: 700 15px "Microsoft YaHei";
         }
 
         QPushButton#SearchButton:hover {
             background: #be1f2f;
+        }
+
+        QPushButton#SearchButton:pressed {
+            background: #a91927;
+        }
+
+        QPushButton#TitleButton {
+            background: #fff1f3;
+            color: #c61f2f;
+            border: 1px solid #f1c3ca;
+            border-radius: 14px;
+            font: 700 18px "Microsoft YaHei"; 
+       }
+
+        QPushButton#TitleButton:hover {
+            background: #ffe3e7;
         }
 
         QPushButton#CloseButton {
