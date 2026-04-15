@@ -1,6 +1,9 @@
 set(PROJECT_SOURCES
     main.cpp
     MainWindow.cpp
+
+    ui/TrendPreviewWidget.cpp
+    ui/ResultCard.cpp
 )
 
 add_executable(${PROJECT_NAME}
