@@ -17,6 +17,9 @@
 #include <QVBoxLayout>
 #include <QVector>
 #include <QMouseEvent>
+#include <QWheelEvent>
+#include <QSplitter>
+#include <QToolButton>
 
 namespace
 {
@@ -40,13 +43,35 @@ namespace
         return btn;
     }
 
-    static QPushButton* createChipButton(const QString &text)
+    static QWidget *createClosableChip(const QString &text)
     {
-        auto *btn = new QPushButton(text);
-        btn->setObjectName("StockChip");
-        btn->setCursor(Qt::PointingHandCursor);
-        btn->setMinimumHeight(38);
-        return btn;
+        auto *chip = new QWidget();
+        chip->setObjectName("StockChip");
+        chip->setAttribute(Qt::WA_StyledBackground, true);
+        chip->setMinimumHeight(38);
+        chip->setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Fixed);
+
+        auto *layout = new QHBoxLayout(chip);
+        layout->setContentsMargins(14, 0, 8, 0);
+        layout->setSpacing(6);
+
+        auto *label = new QLabel(text);
+        label->setObjectName("StockChipLabel");
+
+        auto *closeBtn = new QToolButton();
+        closeBtn->setObjectName("StockChipClose");
+        closeBtn->setText(QStringLiteral("×"));
+        closeBtn->setCursor(Qt::PointingHandCursor);
+        closeBtn->setAutoRaise(true);
+        closeBtn->setFixedSize(16, 16);
+
+        QObject::connect(closeBtn, &QToolButton::clicked, chip, [chip]()
+                         { chip->deleteLater(); });
+
+        layout->addWidget(label);
+        layout->addWidget(closeBtn);
+
+        return chip;
     }
 
     static QPushButton* createTimeButton(const QString &text, bool checked = false)
@@ -66,7 +91,10 @@ namespace
 TrendPreviewWidget::TrendPreviewWidget(QWidget *parent)
     : QWidget(parent)
 {
-    setMinimumSize(760, 520);
+    setMinimumWidth(0);
+    setMinimumHeight(420);
+    setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+    setMouseTracking(true);
 }
 
 void TrendPreviewWidget::paintEvent(QPaintEvent *event)
@@ -175,7 +203,8 @@ void TrendPreviewWidget::paintEvent(QPaintEvent *event)
     }
 
     // 蜡烛图
-    const double step = plot.width() / data.size();
+    const double scaledWidth = plot.width() * m_xScale;
+    const double step = scaledWidth / data.size();
     const double bodyWidth = step * 0.55;
 
     QVector<QPointF> linePoints;
@@ -183,7 +212,7 @@ void TrendPreviewWidget::paintEvent(QPaintEvent *event)
 
     for (int i = 0; i < data.size(); ++i) {
         const auto &c = data[i];
-        const double xCenter = plot.left() + step * (i + 0.5);
+        const double xCenter = plot.left() + m_xOffset + step * (i + 0.5);
         const double yOpen  = toY(c.open);
         const double yClose = toY(c.close);
         const double yHigh  = toY(c.high);
@@ -222,7 +251,7 @@ void TrendPreviewWidget::paintEvent(QPaintEvent *event)
     // 底部时间标识
     p.setPen(QColor("#8a8f99"));
     for (int i = 0; i < data.size(); i += 3) {
-        const double x = plot.left() + step * (i + 0.5);
+        const double x = plot.left() + m_xOffset + step * (i + 0.5);
         p.drawText(QRectF(x - 18, plot.bottom() + 8, 36, 18),
                    Qt::AlignCenter,
                    QString("T%1").arg(i + 1));
@@ -233,34 +262,128 @@ void TrendPreviewWidget::paintEvent(QPaintEvent *event)
     p.setFont(wmFont);
     p.setPen(QColor(214, 40, 57, 22));
     p.drawText(plot, Qt::AlignCenter, QStringLiteral("AISELECTSTOCK"));
+}
 
-    // 右上角图例
-    p.setFont(QFont("Microsoft YaHei", 8));
-    p.setPen(QColor("#d62839"));
-    p.drawText(QRectF(plot.right() - 170, plot.top() - 28, 80, 20),
-               Qt::AlignLeft | Qt::AlignVCenter,
-               QStringLiteral("■ 上涨"));
-    p.setPen(QColor("#17a673"));
-    p.drawText(QRectF(plot.right() - 100, plot.top() - 28, 80, 20),
-               Qt::AlignLeft | Qt::AlignVCenter,
-               QStringLiteral("■ 下跌"));
-    p.setPen(QColor("#ff8c42"));
-    p.drawText(QRectF(plot.right() - 36, plot.top() - 28, 80, 20),
-               Qt::AlignLeft | Qt::AlignVCenter,
-               QStringLiteral("— 趋势"));
+QRectF TrendPreviewWidget::chartRect() const
+{
+    QRectF cardRect = rect().adjusted(8, 8, -8, -8);
+    return cardRect.adjusted(58, 88, -28, -48);
+}
+
+void TrendPreviewWidget::clampXOffset(const QRectF &plot)
+{
+    const double scaledWidth = plot.width() * m_xScale;
+
+    if (scaledWidth <= plot.width()) {
+        m_xOffset = 0.0;
+        return;
+    }
+
+    const double minOffset = plot.width() - scaledWidth; // 负值
+    if (m_xOffset < minOffset) {
+        m_xOffset = minOffset;
+    }
+    if (m_xOffset > 0.0) {
+        m_xOffset = 0.0;
+    }
+}
+
+void TrendPreviewWidget::wheelEvent(QWheelEvent *event)
+{
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+    const QPointF pos = event->position();
+#else
+    const QPointF pos = event->pos();
+#endif
+
+    const QRectF plot = chartRect();
+    if (!plot.contains(pos)) {
+        QWidget::wheelEvent(event);
+        return;
+    }
+
+    const double oldScale = m_xScale;
+    const double factor = (event->angleDelta().y() > 0) ? 1.15 : (1.0 / 1.15);
+    m_xScale *= factor;
+
+    if (m_xScale < 1.0) m_xScale = 1.0;
+    if (m_xScale > 8.0) m_xScale = 8.0;
+
+    // 以鼠标所在位置为缩放中心，只影响 X
+    const double oldScaledWidth = plot.width() * oldScale;
+    const double newScaledWidth = plot.width() * m_xScale;
+
+    double ratio = 0.0;
+    if (oldScaledWidth > 0.0) {
+        ratio = (pos.x() - plot.left() - m_xOffset) / oldScaledWidth;
+    }
+
+    m_xOffset = pos.x() - plot.left() - ratio * newScaledWidth;
+    clampXOffset(plot);
+
+    update();
+    event->accept();
+}
+
+void TrendPreviewWidget::mousePressEvent(QMouseEvent *event)
+{
+    if (event->button() == Qt::LeftButton) {
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+        const QPointF pos = event->position();
+#else
+        const QPointF pos = event->pos();
+#endif
+        if (chartRect().contains(pos)) {
+            m_panning = true;
+            m_lastMousePos = event->pos();
+            setCursor(Qt::ClosedHandCursor);
+            event->accept();
+            return;
+        }
+    }
+
+    QWidget::mousePressEvent(event);
+}
+
+void TrendPreviewWidget::mouseMoveEvent(QMouseEvent *event)
+{
+    if (m_panning) {
+        const int dx = event->pos().x() - m_lastMousePos.x();
+        m_lastMousePos = event->pos();
+
+        m_xOffset += dx;
+        clampXOffset(chartRect());
+
+        update();
+        event->accept();
+        return;
+    }
+
+    QWidget::mouseMoveEvent(event);
+}
+
+void TrendPreviewWidget::mouseReleaseEvent(QMouseEvent *event)
+{
+    if (event->button() == Qt::LeftButton && m_panning) {
+        m_panning = false;
+        unsetCursor();
+        event->accept();
+        return;
+    }
+
+    QWidget::mouseReleaseEvent(event);
 }
 
 // ----------------------------- ResultCard -----------------------------
 
 ResultCard::ResultCard(const QString &name,
                        const QString &code,
-                       const QString &rule,
                        const QString &score,
                        QWidget *parent)
     : QFrame(parent)
 {
     setObjectName("ResultCard");
-    setFixedHeight(122);
+    setFixedHeight(88);
     setFrameShape(QFrame::NoFrame);
 
     auto *layout = new QVBoxLayout(this);
@@ -289,9 +412,9 @@ ResultCard::ResultCard(const QString &name,
     topRow->addStretch();
     topRow->addWidget(codeLabel);
 
-    auto *ruleLabel = new QLabel(rule);
-    ruleLabel->setWordWrap(true);
-    ruleLabel->setStyleSheet("font: 11px 'Microsoft YaHei'; color: #70757f;");
+    // auto *ruleLabel = new QLabel(rule);
+    // ruleLabel->setWordWrap(true);
+    // ruleLabel->setStyleSheet("font: 11px 'Microsoft YaHei'; color: #70757f;");
 
     auto *bottomRow = new QHBoxLayout();
     bottomRow->setSpacing(8);
@@ -329,7 +452,7 @@ ResultCard::ResultCard(const QString &name,
     bottomRow->addWidget(viewBtn);
 
     layout->addLayout(topRow);
-    layout->addWidget(ruleLabel);
+    // layout->addWidget(ruleLabel);
     layout->addStretch();
     layout->addLayout(bottomRow);
 
@@ -366,12 +489,21 @@ MainWindow::MainWindow(QWidget *parent)
     contentLayout->addWidget(createTopBar());
     contentLayout->addWidget(createStockTagsRow());
 
-    auto *bodyLayout = new QHBoxLayout();
-    bodyLayout->setSpacing(14);
-    bodyLayout->addWidget(createChartPanel(), 1);
-    bodyLayout->addWidget(createResultPanel());
+    auto *splitter = new QSplitter(Qt::Horizontal);
+    splitter->setObjectName("BodySplitter");
+    splitter->setChildrenCollapsible(false);
+    splitter->setHandleWidth(6);
 
-    contentLayout->addLayout(bodyLayout, 1);
+    QWidget *chartPanel = createChartPanel();
+    QWidget *resultPanel = createResultPanel();
+
+    splitter->addWidget(chartPanel);
+    splitter->addWidget(resultPanel);
+    splitter->setStretchFactor(0, 1);
+    splitter->setStretchFactor(1, 0);
+    splitter->setSizes({820, 280});
+
+    contentLayout->addWidget(splitter, 1);
 
     mainLayout->addWidget(contentArea, 1);
 
@@ -410,17 +542,13 @@ QWidget* MainWindow::createSidebar()
     logoLayout->addWidget(logoSub);
     logoLayout->addWidget(logoDesc);
 
-    auto *aiSelectBtn = createSideButton(QStringLiteral("AI选股"), true);
-    auto *rankBtn     = createSideButton(QStringLiteral("榜单"));
-    auto *strategyBtn = createSideButton(QStringLiteral("策略"));
-    auto *monitorBtn  = createSideButton(QStringLiteral("监控"));
+    auto *mainSelectBtn = createSideButton(QStringLiteral("首页"), true);
+    auto *aiSelectBtn     = createSideButton(QStringLiteral("AI选股"));
 
     auto *group = new QButtonGroup(sidebar);
     group->setExclusive(true);
+    group->addButton(mainSelectBtn);
     group->addButton(aiSelectBtn);
-    group->addButton(rankBtn);
-    group->addButton(strategyBtn);
-    group->addButton(monitorBtn);
 
     auto *userCard = new QWidget();
     userCard->setObjectName("UserCard");
@@ -445,10 +573,8 @@ QWidget* MainWindow::createSidebar()
 
     layout->addWidget(logoCard);
     layout->addSpacing(8);
+    layout->addWidget(mainSelectBtn);
     layout->addWidget(aiSelectBtn);
-    layout->addWidget(rankBtn);
-    layout->addWidget(strategyBtn);
-    layout->addWidget(monitorBtn);
     layout->addStretch();
     layout->addWidget(userCard);
 
@@ -541,15 +667,7 @@ QWidget* MainWindow::createStockTagsRow()
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(10);
 
-    auto *label = new QLabel(QStringLiteral("热门示例"));
-    label->setStyleSheet("font: 700 13px 'Microsoft YaHei'; color: #6a6f79;");
-    label->setFixedWidth(82);
-
-    layout->addWidget(label);
-    layout->addWidget(createChipButton(QStringLiteral("贵州茅台")));
-    layout->addWidget(createChipButton(QStringLiteral("比亚迪")));
-    layout->addWidget(createChipButton(QStringLiteral("中际旭创")));
-    layout->addWidget(createChipButton(QStringLiteral("寒武纪")));
+    layout->addWidget(createClosableChip(QStringLiteral("上证指数")));
     layout->addStretch();
 
     return row;
@@ -583,15 +701,12 @@ QWidget* MainWindow::createChartPanel()
     timeGroup->addButton(btnWeek);
     timeGroup->addButton(btnMonth);
 
-    auto *trendHint = new QLabel(QStringLiteral("当前条件：五日抬升 + 日K突破 + 周K共振"));
-    trendHint->setStyleSheet("font: 12px 'Microsoft YaHei'; color: #858b95;");
 
     timeLayout->addWidget(btn5d);
     timeLayout->addWidget(btnDay);
     timeLayout->addWidget(btnWeek);
     timeLayout->addWidget(btnMonth);
     timeLayout->addSpacing(10);
-    timeLayout->addWidget(trendHint);
     timeLayout->addStretch();
 
     auto *chart = new TrendPreviewWidget();
@@ -612,7 +727,9 @@ QWidget* MainWindow::createResultPanel()
     auto *panel = new QWidget();
     panel->setObjectName("ResultPanel");
     panel->setAttribute(Qt::WA_StyledBackground, true);
-    panel->setFixedWidth(330);
+    panel->setMinimumWidth(240);
+    panel->setMaximumWidth(320);
+    panel->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Expanding);
 
     auto *layout = new QVBoxLayout(panel);
     layout->setContentsMargins(16, 16, 16, 16);
@@ -633,31 +750,31 @@ QWidget* MainWindow::createResultPanel()
     headerRow->addStretch();
     headerRow->addWidget(filterBtn);
 
-    auto *subTitle = new QLabel(QStringLiteral("根据你的走势条件筛出的候选票（示例数据）"));
+    auto *subTitle = new QLabel(QStringLiteral("根据你的走势条件筛出的候选票"));
     subTitle->setStyleSheet("font: 11px 'Microsoft YaHei'; color: #8b909a;");
 
-    auto *tagRow = new QWidget();
-    auto *tagLayout = new QHBoxLayout(tagRow);
-    tagLayout->setContentsMargins(0, 0, 0, 0);
-    tagLayout->setSpacing(8);
+    // auto *tagRow = new QWidget();
+    // auto *tagLayout = new QHBoxLayout(tagRow);
+    // tagLayout->setContentsMargins(0, 0, 0, 0);
+    // tagLayout->setSpacing(8);
 
-    auto *tag1 = new QLabel(QStringLiteral("放量"));
-    auto *tag2 = new QLabel(QStringLiteral("突破"));
-    auto *tag3 = new QLabel(QStringLiteral("多头"));
-    for (QLabel *tag : {tag1, tag2, tag3}) {
-        tag->setAlignment(Qt::AlignCenter);
-        tag->setFixedHeight(28);
-        tag->setStyleSheet(
-            "background:#fff0f2;"
-            "color:#c81d25;"
-            "border:1px solid #f3c6cc;"
-            "border-radius:14px;"
-            "padding:0 12px;"
-            "font: 600 10px 'Microsoft YaHei';"
-        );
-        tagLayout->addWidget(tag);
-    }
-    tagLayout->addStretch();
+    // auto *tag1 = new QLabel(QStringLiteral("放量"));
+    // auto *tag2 = new QLabel(QStringLiteral("突破"));
+    // auto *tag3 = new QLabel(QStringLiteral("多头"));
+    // for (QLabel *tag : {tag1, tag2, tag3}) {
+    //     tag->setAlignment(Qt::AlignCenter);
+    //     tag->setFixedHeight(28);
+    //     tag->setStyleSheet(
+    //         "background:#fff0f2;"
+    //         "color:#c81d25;"
+    //         "border:1px solid #f3c6cc;"
+    //         "border-radius:14px;"
+    //         "padding:0 12px;"
+    //         "font: 600 10px 'Microsoft YaHei';"
+    //     );
+    //     tagLayout->addWidget(tag);
+    // }
+    // tagLayout->addStretch();
 
     auto *scrollArea = new QScrollArea();
     scrollArea->setWidgetResizable(true);
@@ -671,22 +788,18 @@ QWidget* MainWindow::createResultPanel()
 
     containerLayout->addWidget(new ResultCard(QStringLiteral("中际旭创"),
                                               "300308",
-                                              QStringLiteral("五日走强 / 日K放量突破 / 结构完整"),
                                               "92"));
 
     containerLayout->addWidget(new ResultCard(QStringLiteral("比亚迪"),
                                               "002594",
-                                              QStringLiteral("周K抬高 / 月K趋势修复 / 均线粘合后发散"),
                                               "88"));
 
     containerLayout->addWidget(new ResultCard(QStringLiteral("沪电股份"),
                                               "002463",
-                                              QStringLiteral("均线多头 / 回踩确认 / 短期量价配合"),
                                               "85"));
 
     containerLayout->addWidget(new ResultCard(QStringLiteral("寒武纪"),
                                               "688256",
-                                              QStringLiteral("趋势延续 / 强势震荡 / 结构匹配度较高"),
                                               "83"));
 
     containerLayout->addStretch();
@@ -698,7 +811,7 @@ QWidget* MainWindow::createResultPanel()
 
     layout->addLayout(headerRow);
     layout->addWidget(subTitle);
-    layout->addWidget(tagRow);
+    // layout->addWidget(tagRow);
     layout->addWidget(scrollArea, 1);
     layout->addWidget(bottomInfo);
 
@@ -870,19 +983,33 @@ void MainWindow::applyTheme()
             background: #ffe3e7;
         }
 
-        QPushButton#StockChip {
+        QWidget#StockChip {
             background: white;
-            color: #5e646f;
-            border: 1px solid #efd2d7;
+            border: 1px solid #c98b94;
             border-radius: 16px;
-            padding: 0 18px;
-            font: 600 13px "Microsoft YaHei";
         }
 
-        QPushButton#StockChip:hover {
-            color: #c71f2f;
+        QWidget#StockChip:hover {
             border: 1px solid #e9aab3;
             background: #fff7f8;
+        }
+
+        QLabel#StockChipLabel {
+            color: #5e646f;
+            font: 600 13px "Microsoft YaHei";
+            background: transparent;
+        }
+
+        QToolButton#StockChipClose {
+            background: transparent;
+            border: none;
+            color: #a86a72;
+            font: 700 12px "Microsoft YaHei";
+            padding: 0;
+        }
+
+        QToolButton#StockChipClose:hover {
+            color: #c71f2f;
         }
 
         QWidget#Panel, QWidget#ResultPanel {
