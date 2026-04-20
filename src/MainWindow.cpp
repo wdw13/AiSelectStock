@@ -1,6 +1,9 @@
 #include "MainWindow.h"
 #include "ui/TrendPreviewWidget.h"
 #include "ui/ResultCard.h"
+#include "data/CsvKLineReader.h"
+#include "ui/TrendPreviewWidget.h"
+#include "model/KLinePeriod.h"
 
 #include <QButtonGroup>
 #include <QFrame>
@@ -134,6 +137,12 @@ MainWindow::MainWindow(QWidget *parent)
 
     applyTheme();
     updateMaxButtonState();
+
+    const QVector<KLineBar> bars = CsvKLineReader::readFromFile("C:/Users/11847/Desktop/AiSelectStock/data/sh000001_daily.csv");
+    if (m_chart && !bars.isEmpty()) {
+        m_chart->setDailyBars(bars);
+        m_chart->setPeriod(KLinePeriod::Daily);
+    }
 }
 
 QWidget* MainWindow::createSidebar()
@@ -316,31 +325,45 @@ QWidget* MainWindow::createChartPanel()
     auto *timeGroup = new QButtonGroup(timeRow);
     timeGroup->setExclusive(true);
 
-    auto *btn5d = createTimeButton(QStringLiteral("五日"), true);
-    auto *btnDay = createTimeButton(QStringLiteral("日K"));
+    auto *btnDay = createTimeButton(QStringLiteral("日K"),true);
     auto *btnWeek = createTimeButton(QStringLiteral("周K"));
     auto *btnMonth = createTimeButton(QStringLiteral("月K"));
 
-    timeGroup->addButton(btn5d);
     timeGroup->addButton(btnDay);
     timeGroup->addButton(btnWeek);
     timeGroup->addButton(btnMonth);
 
-
-    timeLayout->addWidget(btn5d);
     timeLayout->addWidget(btnDay);
     timeLayout->addWidget(btnWeek);
     timeLayout->addWidget(btnMonth);
     timeLayout->addSpacing(10);
     timeLayout->addStretch();
 
-    auto *chart = new TrendPreviewWidget();
+    connect(btnDay, &QPushButton::clicked, this, [this]() {
+        if (m_chart) {
+            m_chart->setPeriod(KLinePeriod::Daily);
+        }
+    });
+
+    connect(btnWeek, &QPushButton::clicked, this, [this]() {
+        if (m_chart) {
+            m_chart->setPeriod(KLinePeriod::Weekly);
+        }
+    });
+
+    connect(btnMonth, &QPushButton::clicked, this, [this]() {
+        if (m_chart) {
+            m_chart->setPeriod(KLinePeriod::Monthly);
+        }
+    });
+
+    m_chart = new TrendPreviewWidget();
 
     auto *footerTip = new QLabel(QStringLiteral("说明：本软件仅用于走势筛选与可视化，不提供买卖操作。"));
     footerTip->setStyleSheet("font: 11px 'Microsoft YaHei'; color: #9aa0aa;");
 
     layout->addWidget(timeRow);
-    layout->addWidget(chart, 1);
+    layout->addWidget(m_chart, 1);
     layout->addWidget(footerTip);
 
     addShadow(panel, 28, 6);

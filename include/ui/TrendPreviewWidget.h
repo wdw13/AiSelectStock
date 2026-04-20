@@ -3,6 +3,10 @@
 #include <QWidget>
 #include <QPoint>
 #include <QRectF>
+#include <QVector>
+
+#include "model/KLineBar.h"
+#include "model/KLinePeriod.h"
 
 class QPaintEvent;
 class QWheelEvent;
@@ -13,6 +17,9 @@ class TrendPreviewWidget : public QWidget
 public:
     explicit TrendPreviewWidget(QWidget *parent = nullptr);
 
+    void setDailyBars(const QVector<KLineBar>& bars);
+    void setPeriod(KLinePeriod period);
+
 protected:
     void paintEvent(QPaintEvent *event) override;
     void wheelEvent(QWheelEvent *event) override;
@@ -22,11 +29,22 @@ protected:
 
 private:
     QRectF chartRect() const;
+    void clampRightIndex();
     void clampXOffset(const QRectF &plot);
+    const QVector<KLineBar>& currentBars() const;
 
 private:
-    double m_xScale = 1.0;   // 只控制 X 轴缩放
-    double m_xOffset = 0.0;  // 只控制 X 轴平移
+    QVector<KLineBar> m_dailyBars;
+    QVector<KLineBar> m_weeklyBars;
+    QVector<KLineBar> m_monthlyBars;
+
+    KLinePeriod m_period = KLinePeriod::Daily;
+
+    int m_visibleBars = 100;   // 初始100格
+    int m_rightIndex = -1;     // 右边最后一根K线索引
+
+    double m_xScale = 1.0;
+    double m_xOffset = 0.0;
     bool m_panning = false;
     QPoint m_lastMousePos;
 };

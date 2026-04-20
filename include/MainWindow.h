@@ -5,6 +5,7 @@
 
 class QPushButton;
 class QEvent;
+class TrendPreviewWidget;
 
 class MainWindow : public QWidget
 {
@@ -29,6 +30,7 @@ private:
 private:
     bool m_dragging = false;
     QPoint m_dragPosition;
+    TrendPreviewWidget *m_chart = nullptr;
 
     QPushButton *m_minBtn = nullptr;
     QPushButton *m_maxBtn = nullptr;

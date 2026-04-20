@@ -4,6 +4,9 @@ set(PROJECT_SOURCES
 
     ui/TrendPreviewWidget.cpp
     ui/ResultCard.cpp
+
+    data/CsvKLineReader.cpp
+    core/KLineAggregator.cpp
 )
 
 add_executable(${PROJECT_NAME}

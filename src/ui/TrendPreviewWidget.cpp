@@ -1,4 +1,5 @@
 #include "ui/TrendPreviewWidget.h"
+#include "core/KLineAggregator.h"
 
 #include <QMouseEvent>
 #include <QPainter>
@@ -20,34 +21,7 @@ void TrendPreviewWidget::paintEvent(QPaintEvent *event)
 {
     QWidget::paintEvent(event);
 
-    struct Candle
-    {
-        double open;
-        double close;
-        double high;
-        double low;
-    };
-
-    const QVector<Candle> data = {
-        {13.2, 13.8, 14.0, 13.0},
-        {13.8, 13.6, 14.1, 13.5},
-        {13.6, 14.3, 14.6, 13.4},
-        {14.3, 14.8, 15.0, 14.1},
-        {14.8, 14.5, 15.1, 14.4},
-        {14.5, 15.2, 15.4, 14.3},
-        {15.2, 15.7, 16.0, 15.0},
-        {15.7, 15.4, 15.9, 15.2},
-        {15.4, 16.1, 16.3, 15.2},
-        {16.1, 16.6, 16.9, 15.8},
-        {16.6, 16.3, 16.8, 16.0},
-        {16.3, 16.9, 17.1, 16.2},
-        {16.9, 17.4, 17.6, 16.7},
-        {17.4, 17.2, 17.5, 17.0},
-        {17.2, 17.9, 18.2, 17.1},
-        {17.9, 18.3, 18.5, 17.7},
-        {18.3, 18.1, 18.4, 17.9},
-        {18.1, 18.8, 19.0, 18.0}
-    };
+    const QVector<KLineBar>& data = currentBars();
 
     if (data.isEmpty()) {
         return;
@@ -323,4 +297,66 @@ void TrendPreviewWidget::mouseReleaseEvent(QMouseEvent *event)
     }
 
     QWidget::mouseReleaseEvent(event);
+}
+
+void TrendPreviewWidget::setDailyBars(const QVector<KLineBar>& bars)
+{
+    m_dailyBars = bars;
+    m_weeklyBars = KLineAggregator::toWeekly(m_dailyBars);
+    m_monthlyBars = KLineAggregator::toMonthly(m_dailyBars);
+
+    m_period = KLinePeriod::Daily;
+    m_xScale = 1.0;
+    m_xOffset = 0.0;
+
+    update();
+}
+
+void TrendPreviewWidget::setPeriod(KLinePeriod period)
+{
+    if (m_period == period) {
+        return;
+    }
+
+    m_period = period;
+    m_xScale = 1.0;
+    m_xOffset = 0.0;
+
+    update();
+}
+
+const QVector<KLineBar>& TrendPreviewWidget::currentBars() const
+{
+    switch (m_period) {
+    case KLinePeriod::Weekly:
+        return m_weeklyBars;
+    case KLinePeriod::Monthly:
+        return m_monthlyBars;
+    case KLinePeriod::Daily:
+    default:
+        return m_dailyBars;
+    }
+}
+
+void TrendPreviewWidget::clampRightIndex()
+{
+    const QVector<KLineBar>& bars = currentBars();
+    if (bars.isEmpty()) {
+        m_rightIndex = -1;
+        return;
+    }
+
+    if (m_visibleBars < 20) {
+        m_visibleBars = 20;
+    }
+    if (m_visibleBars > bars.size()) {
+        m_visibleBars = bars.size();
+    }
+
+    if (m_rightIndex < m_visibleBars - 1) {
+        m_rightIndex = m_visibleBars - 1;
+    }
+    if (m_rightIndex >= bars.size()) {
+        m_rightIndex = bars.size() - 1;
+    }
 }
