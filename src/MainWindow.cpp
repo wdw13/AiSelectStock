@@ -2,7 +2,6 @@
 #include "ui/TrendPreviewWidget.h"
 #include "ui/ResultCard.h"
 #include "data/CsvKLineReader.h"
-#include "ui/TrendPreviewWidget.h"
 #include "model/KLinePeriod.h"
 
 #include <QButtonGroup>
@@ -138,7 +137,7 @@ MainWindow::MainWindow(QWidget *parent)
     applyTheme();
     updateMaxButtonState();
 
-    const QVector<KLineBar> bars = CsvKLineReader::readFromFile("C:/Users/11847/Desktop/AiSelectStock/data/sh000001_daily.csv");
+    const QVector<KLineBar> bars = CsvKLineReader::readFromFile("D:/wdw/aiselectstock/data/sh000001_daily.csv");
     if (m_chart && !bars.isEmpty()) {
         m_chart->setDailyBars(bars);
         m_chart->setPeriod(KLinePeriod::Daily);

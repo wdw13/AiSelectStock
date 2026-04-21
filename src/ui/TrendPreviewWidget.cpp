@@ -8,6 +8,28 @@
 #include <QVector>
 #include <cmath>
 
+namespace{
+    static QString formatXAxisDate(const QDate &date, KLinePeriod period, bool isLeftEdge)
+    {
+        if (!date.isValid())
+        {
+            return QString();
+        }
+
+        if (period == KLinePeriod::Monthly)
+        {
+            return date.toString("yyyy-MM");
+        }
+
+        if (isLeftEdge)
+        {
+            return date.toString("yyyy-MM-dd");
+        }
+
+        return date.toString("MM-dd");
+    }
+}
+
 TrendPreviewWidget::TrendPreviewWidget(QWidget *parent)
     : QWidget(parent)
 {
@@ -173,12 +195,60 @@ void TrendPreviewWidget::paintEvent(QPaintEvent *event)
 
     // 底部时间标识
     p.setPen(QColor("#8a8f99"));
-    for (int i = 0; i < data.size(); i += 3) {
+    QFont bottomFont("Microsoft YaHei", 8);
+    p.setFont(bottomFont);
+
+    const int dateStep = 20;
+
+    // 左边第一个可见日期：完整显示
+    if (firstVisible >= 0 && firstVisible < data.size())
+    {
+        const double xLeft = plot.left() + m_xOffset + step * (firstVisible + 0.5);
+        const QString text = formatXAxisDate(data[firstVisible].date, m_period, true);
+
+        if (!text.isEmpty())
+        {
+            p.drawText(QRectF(plot.left() - 10, plot.bottom() + 8, 90, 18),
+                       Qt::AlignLeft | Qt::AlignVCenter,
+                       text);
+        }
+    }
+
+    // 中间每20格显示一次
+    for (int i = firstVisible; i <= lastVisible; ++i)
+    {
+        if ((i - firstVisible) % dateStep != 0)
+        {
+            continue;
+        }
+
         const double x = plot.left() + m_xOffset + step * (i + 0.5);
-        if (x >= plot.left() && x <= plot.right()) {
-            p.drawText(QRectF(x - 18, plot.bottom() + 8, 36, 18),
-                       Qt::AlignCenter,
-                       QString("T%1").arg(i + 1));
+        if (x < plot.left() || x > plot.right())
+        {
+            continue;
+        }
+
+        const QString text = formatXAxisDate(data[i].date, m_period, false);
+        if (text.isEmpty())
+        {
+            continue;
+        }
+
+        p.drawText(QRectF(x - 28, plot.bottom() + 8, 56, 18),
+                   Qt::AlignCenter,
+                   text);
+    }
+
+    // 右边最后一个可见日期
+    if (lastVisible >= 0 && lastVisible < data.size())
+    {
+        const QString text = formatXAxisDate(data[lastVisible].date, m_period, false);
+
+        if (!text.isEmpty())
+        {
+            p.drawText(QRectF(plot.right() - 56, plot.bottom() + 8, 56, 18),
+                       Qt::AlignRight | Qt::AlignVCenter,
+                       text);
         }
     }
 

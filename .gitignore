@@ -4,3 +4,7 @@ out
 
 CMakePresets.json
 CMakeUserPresets.json
+
+.venv
+
+.vscode
