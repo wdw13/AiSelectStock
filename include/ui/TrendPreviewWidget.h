@@ -30,7 +30,6 @@ protected:
 private:
     QRectF chartRect() const;
     void clampRightIndex();
-    void clampXOffset(const QRectF &plot);
     const QVector<KLineBar>& currentBars() const;
 
 private:
@@ -40,11 +39,10 @@ private:
 
     KLinePeriod m_period = KLinePeriod::Daily;
 
-    int m_visibleBars = 100;   // 初始100格
+    int m_visibleBars = 80;    // 初始80格
     int m_rightIndex = -1;     // 右边最后一根K线索引
 
-    double m_xScale = 1.0;
-    double m_xOffset = 0.0;
+    double m_panOffsetPx = 0.0;
     bool m_panning = false;
     QPoint m_lastMousePos;
 };

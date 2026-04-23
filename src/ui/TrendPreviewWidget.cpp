@@ -8,8 +8,10 @@
 #include <QVector>
 #include <cmath>
 
-namespace{
-    static QString formatXAxisDate(const QDate &date, KLinePeriod period, bool isLeftEdge)
+namespace
+{
+
+    static QString formatXAxisMajorDate(const QDate &date, KLinePeriod period, bool forceFull, bool crossYear)
     {
         if (!date.isValid())
         {
@@ -18,16 +20,24 @@ namespace{
 
         if (period == KLinePeriod::Monthly)
         {
-            return date.toString("yyyy-MM");
+            return (forceFull || crossYear)
+                       ? date.toString("yyyy-MM")
+                       : date.toString("yyyy-MM");
         }
 
-        if (isLeftEdge)
+        if (period == KLinePeriod::Weekly)
         {
-            return date.toString("yyyy-MM-dd");
+            return (forceFull || crossYear)
+                       ? date.toString("yyyy-MM-dd")
+                       : date.toString("MM-dd");
         }
 
-        return date.toString("MM-dd");
+        // Daily
+        return (forceFull || crossYear)
+                   ? date.toString("yyyy-MM-dd")
+                   : date.toString("MM-dd");
     }
+
 }
 
 TrendPreviewWidget::TrendPreviewWidget(QWidget *parent)
@@ -81,19 +91,24 @@ void TrendPreviewWidget::paintEvent(QPaintEvent *event)
     const int hLines = 5;
     const int vLines = 6;
 
-    const double scaledWidth = plot.width() * m_xScale;
-    const double step = scaledWidth / data.size();
-    const double bodyWidth = step * 0.55;
+    clampRightIndex();
 
-    int firstVisible = static_cast<int>(std::floor((-m_xOffset) / step));
-    int lastVisible  = static_cast<int>(std::ceil((plot.width() - m_xOffset) / step));
+    int firstVisible = qMax(0, m_rightIndex - m_visibleBars + 1);
+    int lastVisible = qMin(m_rightIndex, data.size() - 1);
 
-    if (firstVisible < 0) firstVisible = 0;
-    if (lastVisible >= data.size()) lastVisible = data.size() - 1;
-    if (lastVisible < firstVisible) {
-        firstVisible = 0;
-        lastVisible = data.size() - 1;
+    if (lastVisible < firstVisible)
+    {
+        return;
     }
+
+    const int visibleCount = lastVisible - firstVisible + 1;
+    const double step = plot.width() / visibleCount;
+    const double bodyWidth = qBound(3.0, step * 0.62, 28.0);
+
+    auto xAtSlot = [&](int slot) -> double
+    {
+        return plot.left() + m_panOffsetPx + step * (slot + 0.5);
+    };
 
     double minPrice = data[firstVisible].low;
     double maxPrice = data[firstVisible].high;
@@ -146,26 +161,68 @@ void TrendPreviewWidget::paintEvent(QPaintEvent *event)
     p.save();
     p.setClipRect(plot.adjusted(1, 1, -1, -1));
 
-    QVector<QPointF> linePoints;
-    linePoints.reserve(data.size());
+    auto buildMAPoints = [&](int period) -> QVector<QPointF>
+    {
+        QVector<QPointF> pts;
+        pts.reserve(qMax(0, lastVisible - firstVisible + 1));
 
-    for (int i = 0; i < data.size(); ++i) {
-        const auto &c = data[i];
-        const double xCenter = plot.left() + m_xOffset + step * (i + 0.5);
+        for (int i = firstVisible; i <= lastVisible; ++i)
+        {
+            if (i < period - 1)
+            {
+                continue;
+            }
 
-        if (xCenter < plot.left() - step || xCenter > plot.right() + step) {
-            continue;
+            double sum = 0.0;
+            for (int j = i - period + 1; j <= i; ++j)
+            {
+                sum += data[j].close;
+            }
+
+            const double ma = sum / period;
+            const int slot = i - firstVisible;
+            const double x = xAtSlot(slot);
+            const double y = toY(ma);
+
+            pts.push_back(QPointF(x, y));
         }
 
-        const double yOpen  = toY(c.open);
+        return pts;
+    };
+
+    auto drawMAPath = [&](const QVector<QPointF> &pts, const QColor &color)
+    {
+        if (pts.size() < 2)
+        {
+            return;
+        }
+
+        QPainterPath path(pts.first());
+        for (int i = 1; i < pts.size(); ++i)
+        {
+            path.lineTo(pts[i]);
+        }
+
+        p.setPen(QPen(color, 0.8));
+        p.setBrush(Qt::NoBrush);
+        p.drawPath(path);
+    };
+
+    for (int i = firstVisible; i <= lastVisible; ++i)
+    {
+        const auto &c = data[i];
+        const int slot = i - firstVisible;
+        const double xCenter = xAtSlot(slot);
+
+        const double yOpen = toY(c.open);
         const double yClose = toY(c.close);
-        const double yHigh  = toY(c.high);
-        const double yLow   = toY(c.low);
+        const double yHigh = toY(c.high);
+        const double yLow = toY(c.low);
 
         const bool rise = c.close >= c.open;
         const QColor candleColor = rise ? QColor("#d62839") : QColor("#17a673");
 
-        p.setPen(QPen(candleColor, 1.5));
+        p.setPen(QPen(candleColor, 1.0));
         p.drawLine(QPointF(xCenter, yHigh), QPointF(xCenter, yLow));
 
         QRectF bodyRect(xCenter - bodyWidth / 2.0,
@@ -175,21 +232,18 @@ void TrendPreviewWidget::paintEvent(QPaintEvent *event)
 
         p.setPen(Qt::NoPen);
         p.setBrush(candleColor);
-        p.drawRoundedRect(bodyRect, 2, 2);
-
-        linePoints.push_back(QPointF(xCenter, yClose));
+        p.drawRoundedRect(bodyRect, 1.5, 1.5);
     }
 
-    if (!linePoints.isEmpty()) {
-        QPainterPath trendPath(linePoints.first());
-        for (int i = 1; i < linePoints.size(); ++i) {
-            trendPath.lineTo(linePoints[i]);
-        }
+    const QVector<QPointF> ma5 = buildMAPoints(5);
+    const QVector<QPointF> ma10 = buildMAPoints(10);
+    const QVector<QPointF> ma20 = buildMAPoints(20);
+    const QVector<QPointF> ma30 = buildMAPoints(30);
 
-        p.setPen(QPen(QColor("#ff8c42"), 2.2));
-        p.setBrush(Qt::NoBrush);
-        p.drawPath(trendPath);
-    }
+    drawMAPath(ma5, QColor("#8f96a3"));  // 灰
+    drawMAPath(ma10, QColor("#8e63d2")); // 紫
+    drawMAPath(ma20, QColor("#d8b11e")); // 黄
+    drawMAPath(ma30, QColor("#4a78d3")); // 蓝
 
     p.restore();
 
@@ -198,58 +252,70 @@ void TrendPreviewWidget::paintEvent(QPaintEvent *event)
     QFont bottomFont("Microsoft YaHei", 8);
     p.setFont(bottomFont);
 
-    const int dateStep = 20;
-
-    // 左边第一个可见日期：完整显示
-    if (firstVisible >= 0 && firstVisible < data.size())
+    // ===== 小刻度 =====
+    const bool showMinorTicks = step >= 6.0;
+    if (showMinorTicks)
     {
-        const double xLeft = plot.left() + m_xOffset + step * (firstVisible + 0.5);
-        const QString text = formatXAxisDate(data[firstVisible].date, m_period, true);
-
-        if (!text.isEmpty())
+        p.setPen(QPen(QColor("#c7cbd3"), 1));
+        for (int i = firstVisible; i <= lastVisible; ++i)
         {
-            p.drawText(QRectF(plot.left() - 10, plot.bottom() + 8, 90, 18),
-                       Qt::AlignLeft | Qt::AlignVCenter,
-                       text);
+            const int slot = i - firstVisible;
+            const double x = xAtSlot(slot);
+
+            if (x < plot.left() || x > plot.right())
+            {
+                continue;
+            }
+
+            p.drawLine(QPointF(x, plot.bottom() + 2),
+                       QPointF(x, plot.bottom() + 7));
         }
     }
 
-    // 中间每20格显示一次
-    for (int i = firstVisible; i <= lastVisible; ++i)
-    {
-        if ((i - firstVisible) % dateStep != 0)
-        {
-            continue;
-        }
+    // ===== 大刻度 =====
+    p.setPen(QPen(QColor("#9aa0aa"), 1.2));
 
-        const double x = plot.left() + m_xOffset + step * (i + 0.5);
+    int majorStep = qMax(1, visibleCount / 4);
+
+    int firstMajor = (firstVisible / majorStep) * majorStep;
+    if (firstMajor < firstVisible)
+    {
+        firstMajor += majorStep;
+    }
+
+    QFontMetrics fm(bottomFont);
+
+    for (int idx = firstMajor; idx <= lastVisible; idx += majorStep)
+    {
+        const int slot = idx - firstVisible;
+        const double x = xAtSlot(slot);
+
         if (x < plot.left() || x > plot.right())
         {
             continue;
         }
 
-        const QString text = formatXAxisDate(data[i].date, m_period, false);
-        if (text.isEmpty())
-        {
-            continue;
-        }
+        p.drawLine(QPointF(x, plot.bottom() + 1),
+                   QPointF(x, plot.bottom() + 11));
 
-        p.drawText(QRectF(x - 28, plot.bottom() + 8, 56, 18),
-                   Qt::AlignCenter,
-                   text);
-    }
+        const bool forceFull = (idx == firstVisible);
+        const bool crossYear = (data[idx].date.year() != data[firstVisible].date.year());
 
-    // 右边最后一个可见日期
-    if (lastVisible >= 0 && lastVisible < data.size())
-    {
-        const QString text = formatXAxisDate(data[lastVisible].date, m_period, false);
+        QString text = formatXAxisMajorDate(
+            data[idx].date,
+            m_period,
+            forceFull,
+            crossYear);
 
-        if (!text.isEmpty())
-        {
-            p.drawText(QRectF(plot.right() - 56, plot.bottom() + 8, 56, 18),
-                       Qt::AlignRight | Qt::AlignVCenter,
-                       text);
-        }
+        const int textW = qMax(46, fm.horizontalAdvance(text) + 8);
+
+        // 关键：不要边界夹紧，永远以刻度中心对齐
+        QRectF textRect(x - textW / 2.0,
+                        plot.bottom() + 12,
+                        textW,
+                        18);
+
+        p.drawText(textRect, Qt::AlignCenter, text);
     }
 
     // 水印
@@ -263,24 +329,6 @@ QRectF TrendPreviewWidget::chartRect() const
 {
     QRectF cardRect = rect().adjusted(8, 8, -8, -8);
     return cardRect.adjusted(58, 88, -28, -48);
-}
-
-void TrendPreviewWidget::clampXOffset(const QRectF &plot)
-{
-    const double scaledWidth = plot.width() * m_xScale;
-
-    if (scaledWidth <= plot.width()) {
-        m_xOffset = 0.0;
-        return;
-    }
-
-    const double minOffset = plot.width() - scaledWidth; // 负值
-    if (m_xOffset < minOffset) {
-        m_xOffset = minOffset;
-    }
-    if (m_xOffset > 0.0) {
-        m_xOffset = 0.0;
-    }
 }
 
 void TrendPreviewWidget::wheelEvent(QWheelEvent *event)
@@ -297,38 +345,47 @@ void TrendPreviewWidget::wheelEvent(QWheelEvent *event)
         return;
     }
 
-    const double oldScale = m_xScale;
-    const double factor = (event->angleDelta().y() > 0) ? 1.15 : (1.0 / 1.15);
-    m_xScale *= factor;
-
-    if (m_xScale < 1.0) m_xScale = 1.0;
-    if (m_xScale > 8.0) m_xScale = 8.0;
-
-    // 以鼠标所在位置为缩放中心，只影响 X
-    const double oldScaledWidth = plot.width() * oldScale;
-    const double newScaledWidth = plot.width() * m_xScale;
-
-    double ratio = 0.0;
-    if (oldScaledWidth > 0.0) {
-        ratio = (pos.x() - plot.left() - m_xOffset) / oldScaledWidth;
+    const QVector<KLineBar>& data = currentBars();
+    if (data.isEmpty()) {
+        return;
     }
 
-    m_xOffset = pos.x() - plot.left() - ratio * newScaledWidth;
-    clampXOffset(plot);
+    const int oldVisibleBars = m_visibleBars;
+
+    if (event->angleDelta().y() > 0) {
+        // 放大：显示更少根
+        m_visibleBars = qMax(10, int(std::round(m_visibleBars * 0.85)));
+    } else {
+        // 缩小：显示更多根
+        m_visibleBars = qMin(data.size(), int(std::round(m_visibleBars * 1.15)));
+    }
+
+    if (m_visibleBars < 20) m_visibleBars = 20;
+    if (m_visibleBars > data.size()) m_visibleBars = data.size();
+
+    // 以鼠标所在位置为中心缩放
+    const int oldFirst = qMax(0, m_rightIndex - oldVisibleBars + 1);
+    const double ratio = (pos.x() - plot.left()) / plot.width();
+    const int anchorIndex = qBound(oldFirst,
+                                   oldFirst + int(ratio * oldVisibleBars),
+                                   m_rightIndex);
+
+    m_rightIndex = anchorIndex + int((1.0 - ratio) * m_visibleBars);
+    clampRightIndex();
 
     update();
     event->accept();
+
+    m_panOffsetPx = 0.0;
 }
 
 void TrendPreviewWidget::mousePressEvent(QMouseEvent *event)
 {
-    if (event->button() == Qt::LeftButton) {
-#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
-        const QPointF pos = event->position();
-#else
-        const QPointF pos = event->pos();
-#endif
-        if (chartRect().contains(pos)) {
+    if (event->button() == Qt::LeftButton)
+    {
+        const QRectF plot = chartRect();
+        if (plot.contains(event->pos()))
+        {
             m_panning = true;
             m_lastMousePos = event->pos();
             setCursor(Qt::ClosedHandCursor);
@@ -342,14 +399,48 @@ void TrendPreviewWidget::mousePressEvent(QMouseEvent *event)
 
 void TrendPreviewWidget::mouseMoveEvent(QMouseEvent *event)
 {
-    if (m_panning) {
+    if (m_panning)
+    {
+        const QVector<KLineBar>& data = currentBars();
+        if (data.isEmpty()) {
+            return;
+        }
+
         const int dx = event->pos().x() - m_lastMousePos.x();
         m_lastMousePos = event->pos();
 
-        m_xOffset += dx;
-        clampXOffset(chartRect());
+        const QRectF plot = chartRect();
+        if (plot.width() > 0)
+        {
+            const int firstVisible = qMax(0, m_rightIndex - m_visibleBars + 1);
+            const int lastVisible  = qMin(m_rightIndex, data.size() - 1);
+            const int visibleCount = lastVisible - firstVisible + 1;
 
-        update();
+            if (visibleCount > 0)
+            {
+                const double step = plot.width() / visibleCount;
+
+                // 先累计像素位移
+                m_panOffsetPx += dx;
+
+                // 像素残余达到一根柱宽时，再真正移动索引
+                while (m_panOffsetPx >= step)
+                {
+                    m_rightIndex -= 1;
+                    m_panOffsetPx -= step;
+                }
+
+                while (m_panOffsetPx <= -step)
+                {
+                    m_rightIndex += 1;
+                    m_panOffsetPx += step;
+                }
+
+                clampRightIndex();
+                update();
+            }
+        }
+
         event->accept();
         return;
     }
@@ -376,8 +467,9 @@ void TrendPreviewWidget::setDailyBars(const QVector<KLineBar>& bars)
     m_monthlyBars = KLineAggregator::toMonthly(m_dailyBars);
 
     m_period = KLinePeriod::Daily;
-    m_xScale = 1.0;
-    m_xOffset = 0.0;
+
+    m_visibleBars = 80;
+    m_rightIndex = m_dailyBars.isEmpty() ? -1 : (m_dailyBars.size() - 1);
 
     update();
 }
@@ -389,8 +481,10 @@ void TrendPreviewWidget::setPeriod(KLinePeriod period)
     }
 
     m_period = period;
-    m_xScale = 1.0;
-    m_xOffset = 0.0;
+
+    const QVector<KLineBar>& bars = currentBars();
+    m_visibleBars = qMin(80, qMax(20, bars.size()));
+    m_rightIndex = bars.isEmpty() ? -1 : (bars.size() - 1);
 
     update();
 }
