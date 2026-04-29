@@ -1,4 +1,4 @@
-#include "ui/ResultCard.h"
+#include "ui/MatchResultWidget.h"
 
 #include <QGraphicsDropShadowEffect>
 #include <QHBoxLayout>
@@ -15,13 +15,13 @@ static void addShadow(QWidget *w, int blur = 28, int offsetY = 6)
     w->setGraphicsEffect(effect);
 }
 
-ResultCard::ResultCard(const QString &name,
+MatchResultWidget::MatchResultWidget(const QString &name,
                        const QString &code,
                        const QString &score,
                        QWidget *parent)
     : QFrame(parent)
 {
-    setObjectName("ResultCard");
+    setObjectName("MatchResultWidget");
     setFixedHeight(88);
     setFrameShape(QFrame::NoFrame);
 

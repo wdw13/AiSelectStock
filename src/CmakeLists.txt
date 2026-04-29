@@ -2,11 +2,28 @@ set(PROJECT_SOURCES
     main.cpp
     MainWindow.cpp
 
-    ui/TrendPreviewWidget.cpp
-    ui/ResultCard.cpp
+    ../include/MainWindow.h
 
-    data/CsvKLineReader.cpp
-    core/KLineAggregator.cpp
+    ui/DisplayInterfaceWidget.cpp
+    ../include/ui/DisplayInterfaceWidget.h
+
+    ui/MatchResultWidget.cpp
+    ../include/ui/MatchResultWidget.h
+
+    ui/ClickStockWidget.cpp
+    ../include/ui/ClickStockWidget.h
+
+    data/DataBase.cpp
+    ../include/data/DataBase.h
+
+    data/DataPath.cpp
+    ../include/data/DataPath.h
+
+    core/KLineCalculate.cpp
+    ../include/core/KLineCalculate.h
+
+    ../include/model/KLineData.h
+    ../include/model/KLineTime.h
 )
 
 add_executable(${PROJECT_NAME}
@@ -22,7 +39,7 @@ target_include_directories(${PROJECT_NAME}
 # 链接 Qt Widgets
 target_link_libraries(${PROJECT_NAME}
     PRIVATE
-        Qt${QT_VERSION_MAJOR}::Widgets
+        Qt${QT_VERSION_MAJOR}::Widgets Qt${QT_VERSION_MAJOR}::Sql
 )
 
 # Windows 下生成 GUI 程序，不弹控制台

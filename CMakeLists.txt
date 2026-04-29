@@ -12,8 +12,8 @@ set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC OFF)   # 你不用 .ui，就关掉
 
 # 查找 Qt Widgets
-find_package(QT NAMES Qt6 Qt5 REQUIRED COMPONENTS Widgets)
-find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Widgets)
+find_package(QT NAMES Qt6 Qt5 REQUIRED COMPONENTS Widgets Sql)
+find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Widgets Sql)
 
 # 添加子目录
 add_subdirectory(src)

@@ -5,20 +5,21 @@
 #include <QRectF>
 #include <QVector>
 
-#include "model/KLineBar.h"
-#include "model/KLinePeriod.h"
+#include "model/KLineData.h"
+#include "model/KLineTime.h"
 
 class QPaintEvent;
 class QWheelEvent;
 class QMouseEvent;
 
-class TrendPreviewWidget : public QWidget
+class DisplayInterfaceWidget : public QWidget
 {
 public:
-    explicit TrendPreviewWidget(QWidget *parent = nullptr);
+    explicit DisplayInterfaceWidget(QWidget *parent = nullptr);
 
-    void setDailyBars(const QVector<KLineBar>& bars);
-    void setPeriod(KLinePeriod period);
+    void setDailyBars(const QVector<KLineData>& bars);
+    void setPeriod(KLineTime period);
+    void setSymbolInfo(const QString& code, const QString& name);
 
 protected:
     void paintEvent(QPaintEvent *event) override;
@@ -30,14 +31,14 @@ protected:
 private:
     QRectF chartRect() const;
     void clampRightIndex();
-    const QVector<KLineBar>& currentBars() const;
+    const QVector<KLineData>& currentBars() const;
 
 private:
-    QVector<KLineBar> m_dailyBars;
-    QVector<KLineBar> m_weeklyBars;
-    QVector<KLineBar> m_monthlyBars;
+    QVector<KLineData> m_dailyBars;
+    QVector<KLineData> m_weeklyBars;
+    QVector<KLineData> m_monthlyBars;
 
-    KLinePeriod m_period = KLinePeriod::Daily;
+    KLineTime m_period = KLineTime::Daily;
 
     int m_visibleBars = 80;    // 初始80格
     int m_rightIndex = -1;     // 右边最后一根K线索引
@@ -45,4 +46,6 @@ private:
     double m_panOffsetPx = 0.0;
     bool m_panning = false;
     QPoint m_lastMousePos;
+    QString m_symbolCode;
+    QString m_symbolName;
 };

@@ -1,32 +1,39 @@
-#include "core/KLineAggregator.h"
+#include "core/KLineCalculate.h"
 
-QVector<KLineBar> KLineAggregator::toWeekly(const QVector<KLineBar>& dailyBars)
+QVector<KLineData> KLineCalculate::toWeekly(const QVector<KLineData>& dailyBars)
 {
-    QVector<KLineBar> result;
+    QVector<KLineData> result;
     if (dailyBars.isEmpty()) {
         return result;
     }
 
-    KLineBar current = dailyBars.first();
-    int currentWeek = current.date.weekNumber();
-    int currentYear = current.date.year();
+    KLineData current = dailyBars.first();
+
+    int currentYear = 0;
+    int currentWeek = current.date.weekNumber(&currentYear);
 
     for (int i = 1; i < dailyBars.size(); ++i) {
-        const KLineBar& bar = dailyBars[i];
+        const KLineData& bar = dailyBars[i];
 
-        int week = bar.date.weekNumber();
-        int year = bar.date.year();
+        int year = 0;
+        int week = bar.date.weekNumber(&year);
 
         if (week == currentWeek && year == currentYear) {
-            current.high += 0; // 占位，下面重写
-            if (bar.high > current.high) current.high = bar.high;
-            if (bar.low < current.low) current.low = bar.low;
+            if (bar.high > current.high) {
+                current.high = bar.high;
+            }
+
+            if (bar.low < current.low) {
+                current.low = bar.low;
+            }
+
             current.close = bar.close;
             current.date = bar.date;
             current.volume += bar.volume;
             current.amount += bar.amount;
         } else {
             result.push_back(current);
+
             current = bar;
             currentWeek = week;
             currentYear = year;
@@ -37,19 +44,19 @@ QVector<KLineBar> KLineAggregator::toWeekly(const QVector<KLineBar>& dailyBars)
     return result;
 }
 
-QVector<KLineBar> KLineAggregator::toMonthly(const QVector<KLineBar>& dailyBars)
+QVector<KLineData> KLineCalculate::toMonthly(const QVector<KLineData>& dailyBars)
 {
-    QVector<KLineBar> result;
+    QVector<KLineData> result;
     if (dailyBars.isEmpty()) {
         return result;
     }
 
-    KLineBar current = dailyBars.first();
+    KLineData current = dailyBars.first();
     int currentYear = current.date.year();
     int currentMonth = current.date.month();
 
     for (int i = 1; i < dailyBars.size(); ++i) {
-        const KLineBar& bar = dailyBars[i];
+        const KLineData& bar = dailyBars[i];
 
         int year = bar.date.year();
         int month = bar.date.month();

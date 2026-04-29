@@ -1,6 +1,6 @@
 #pragma once
 
-enum class KLinePeriod
+enum class KLineTime
 {
     Daily,
     Weekly,

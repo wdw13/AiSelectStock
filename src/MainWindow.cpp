@@ -1,15 +1,22 @@
 #include "MainWindow.h"
-#include "ui/TrendPreviewWidget.h"
-#include "ui/ResultCard.h"
-#include "data/CsvKLineReader.h"
-#include "model/KLinePeriod.h"
-
+#include "ui/DisplayInterfaceWidget.h"
+#include "ui/MatchResultWidget.h"
+#include "ui/ClickStockWidget.h"
+#include "model/KLineTime.h"
+#include "data/DataBase.h"
+#include "data/DataPath.h"
+#include <QCoreApplication>
+#include <QDir>
+#include <QDebug>
+#include <QMessageBox>
 #include <QButtonGroup>
 #include <QFrame>
 #include <QGraphicsDropShadowEffect>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
+#include <QListWidget>
+#include <QListWidgetItem>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPainterPath>
@@ -23,6 +30,9 @@
 
 namespace
 {
+    const QString kDefaultCode = QStringLiteral("sh000001");
+    const QString kDefaultName = QStringLiteral("上证指数");
+
     static void addShadow(QWidget *w, int blur = 28, int offsetY = 6)
     {
         auto *effect = new QGraphicsDropShadowEffect(w);
@@ -43,35 +53,9 @@ namespace
         return btn;
     }
 
-    static QWidget *createClosableChip(const QString &text)
+    static ClickableStockChip *createClosableChip(const QString &text)
     {
-        auto *chip = new QWidget();
-        chip->setObjectName("StockChip");
-        chip->setAttribute(Qt::WA_StyledBackground, true);
-        chip->setMinimumHeight(38);
-        chip->setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Fixed);
-
-        auto *layout = new QHBoxLayout(chip);
-        layout->setContentsMargins(14, 0, 8, 0);
-        layout->setSpacing(6);
-
-        auto *label = new QLabel(text);
-        label->setObjectName("StockChipLabel");
-
-        auto *closeBtn = new QToolButton();
-        closeBtn->setObjectName("StockChipClose");
-        closeBtn->setText(QStringLiteral("×"));
-        closeBtn->setCursor(Qt::PointingHandCursor);
-        closeBtn->setAutoRaise(true);
-        closeBtn->setFixedSize(16, 16);
-
-        QObject::connect(closeBtn, &QToolButton::clicked, chip, [chip]()
-                         { chip->deleteLater(); });
-
-        layout->addWidget(label);
-        layout->addWidget(closeBtn);
-
-        return chip;
+        return new ClickableStockChip(text);
     }
 
     static QPushButton* createTimeButton(const QString &text, bool checked = false)
@@ -114,6 +98,7 @@ MainWindow::MainWindow(QWidget *parent)
     contentLayout->setSpacing(14);
 
     contentLayout->addWidget(createTopBar());
+    createSearchPopup();
     contentLayout->addWidget(createStockTagsRow());
 
     auto *splitter = new QSplitter(Qt::Horizontal);
@@ -137,11 +122,7 @@ MainWindow::MainWindow(QWidget *parent)
     applyTheme();
     updateMaxButtonState();
 
-    const QVector<KLineBar> bars = CsvKLineReader::readFromFile("D:/wdw/aiselectstock/data/sh000001_daily.csv");
-    if (m_chart && !bars.isEmpty()) {
-        m_chart->setDailyBars(bars);
-        m_chart->setPeriod(KLinePeriod::Daily);
-    }
+    switchToSymbol(kDefaultCode, kDefaultName);
 }
 
 QWidget* MainWindow::createSidebar()
@@ -237,11 +218,11 @@ QWidget* MainWindow::createTopBar()
     searchLayout->setContentsMargins(14, 4, 4, 4);
     searchLayout->setSpacing(8);
 
-    auto *searchEdit = new QLineEdit();
-    searchEdit->setObjectName("SearchEdit");
-    searchEdit->setPlaceholderText(QStringLiteral("输入股票名称 / 代码 "));
-    searchEdit->setClearButtonEnabled(true);
-    searchEdit->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+    m_searchEdit = new QLineEdit();
+    m_searchEdit->setObjectName("SearchEdit");
+    m_searchEdit->setPlaceholderText(QStringLiteral("输入股票名称 / 代码 "));
+    m_searchEdit->setClearButtonEnabled(true);
+    m_searchEdit->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
 
     auto *searchBtn = new QPushButton(QStringLiteral("搜索"));
     searchBtn->setObjectName("SearchButton");
@@ -249,7 +230,7 @@ QWidget* MainWindow::createTopBar()
     searchBtn->setFixedWidth(110);
     searchBtn->setMinimumHeight(44);
 
-    searchLayout->addWidget(searchEdit, 1);
+    searchLayout->addWidget(m_searchEdit, 1);
     searchLayout->addWidget(searchBtn);
 
     m_minBtn = new QPushButton(QStringLiteral("—"));
@@ -283,6 +264,35 @@ QWidget* MainWindow::createTopBar()
 
     connect(m_closeBtn, &QPushButton::clicked, this, &QWidget::close);
 
+    connect(m_searchEdit, &QLineEdit::textChanged, this, [this]()
+            { performSearch(); });
+
+    connect(searchBtn, &QPushButton::clicked, this, [this]()
+            {
+    performSearch();
+
+    if (!m_searchResultList || m_searchResultList->count() <= 0) {
+        const QString keyword = m_searchEdit ? m_searchEdit->text().trimmed() : QString();
+
+        if (!keyword.isEmpty()) {
+            QMessageBox::information(
+                this,
+                QStringLiteral("搜索结果"),
+                QStringLiteral("没有找到该股票，本软件只支持普通股。")
+            );
+        }
+
+        return;
+    }
+
+    QListWidgetItem *item = m_searchResultList->currentItem();
+
+    if (!item) {
+        item = m_searchResultList->item(0);
+    }
+
+    onSearchResultClicked(item); });
+
     layout->addStretch(1);
     layout->addWidget(searchWrap);
     layout->addStretch(1);
@@ -293,17 +303,302 @@ QWidget* MainWindow::createTopBar()
     return topBar;
 }
 
+void MainWindow::createSearchPopup()
+{
+    m_searchPopup = new QFrame(this);
+    m_searchPopup->setObjectName("SearchPopup");
+    m_searchPopup->setFrameShape(QFrame::NoFrame);
+
+    auto *popupLayout = new QVBoxLayout(m_searchPopup);
+    popupLayout->setContentsMargins(6, 6, 6, 6);
+    popupLayout->setSpacing(0);
+
+    m_searchResultList = new QListWidget(m_searchPopup);
+    m_searchResultList->setObjectName("SearchResultList");
+    m_searchResultList->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    m_searchResultList->setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);
+    m_searchResultList->setSelectionMode(QAbstractItemView::SingleSelection);
+    m_searchResultList->setMouseTracking(true);
+
+    popupLayout->addWidget(m_searchResultList);
+
+    m_searchPopup->resize(360, 220);
+    m_searchPopup->hide();
+
+    connect(m_searchResultList, &QListWidget::itemClicked,
+            this, &MainWindow::onSearchResultClicked);
+}
+
+void MainWindow::updateSearchPopupPosition()
+{
+    if (!m_searchEdit || !m_searchPopup) {
+        return;
+    }
+
+    const QPoint pos = m_searchEdit->mapTo(this, QPoint(0, m_searchEdit->height() + 6));
+    m_searchPopup->setGeometry(pos.x(), pos.y(), m_searchEdit->width(), 220);
+}
+
+void MainWindow::hideSearchPopup()
+{
+    if (m_searchPopup) {
+        m_searchPopup->hide();
+    }
+    if (m_searchResultList) {
+        m_searchResultList->clear();
+    }
+}
+
+void MainWindow::performSearch()
+{
+    if (!m_searchEdit || !m_searchResultList || !m_searchPopup) {
+        return;
+    }
+
+    const QString keyword = m_searchEdit->text().trimmed();
+
+    if (keyword.isEmpty()) {
+        hideSearchPopup();
+        return;
+    }
+
+    const QString dbPath = AppPaths::databasePath();
+    DataBase repo(dbPath);
+    const QVector<StockItem> items = repo.searchStocks(keyword, 20);
+
+    showSearchResults(items);
+}
+
+void MainWindow::showSearchResults(const QVector<StockItem> &items)
+{
+    if (!m_searchPopup || !m_searchResultList) {
+        return;
+    }
+
+    m_searchResultList->clear();
+
+    if (items.isEmpty()) {
+        m_searchPopup->hide();
+        return;
+    }
+
+    for (const auto &item : items)
+    {
+        auto *listItem = new QListWidgetItem(
+            QString("%1    %2").arg(item.code, item.name),
+            m_searchResultList);
+
+        listItem->setData(Qt::UserRole, item.code);
+        listItem->setData(Qt::UserRole + 1, item.name);
+    }
+
+    updateSearchPopupPosition();
+    m_searchPopup->show();
+    m_searchPopup->raise();
+}
+
+void MainWindow::onSearchResultClicked(QListWidgetItem *item)
+{
+    if (!item) {
+        return;
+    }
+
+    const QString code = item->data(Qt::UserRole).toString();
+
+    QString name = item->data(Qt::UserRole + 1).toString().trimmed();
+
+    if (name.isEmpty()) {
+        const QString text = item->text();
+        int splitPos = text.indexOf(" ");
+        if (splitPos > 0) {
+            name = text.mid(splitPos).trimmed();
+        }
+    }
+
+    if (name.isEmpty()) {
+        name = code;
+    }
+
+    const QString text = QString("%1    %2").arg(code, name);
+
+    const QString dbPath = AppPaths::databasePath();
+    DataBase repo(dbPath);
+    const QVector<KLineData> bars = repo.loadDailyBars(code);
+
+    if (bars.isEmpty())
+    {
+        hideSearchPopup();
+
+        QMessageBox::information(
+            this,
+            QStringLiteral("暂无数据"),
+            QStringLiteral("该股票暂无 K 线数据，请先同步该股票数据。"));
+
+        return;
+    }
+
+    if (m_searchEdit)
+    {
+        QSignalBlocker blocker(m_searchEdit);
+        m_searchEdit->clear();
+    }
+
+    hideSearchPopup();
+
+    ensureStockTabExists(code, name);
+    switchToSymbol(code, name);
+}
+
+void MainWindow::ensureStockTabExists(const QString &code, const QString &name)
+{
+    if (!m_stockTagsLayout) {
+        return;
+    }
+
+    for (int i = 0; i < m_stockTagsLayout->count(); ++i) {
+        QWidget *w = m_stockTagsLayout->itemAt(i)->widget();
+        auto *chip = qobject_cast<ClickableStockChip*>(w);
+        if (!chip) {
+            continue;
+        }
+
+        if (chip->property("code").toString() == code) {
+            return;
+        }
+    }
+
+    QString displayName = name.trimmed();
+
+    if (displayName.isEmpty())
+    {
+        displayName = code;
+    }
+
+    auto *chip = createClosableChip(displayName);
+    chip->setClosable(true);
+    chip->setProperty("code", code);
+    chip->setProperty("name", displayName);
+    chip->setProperty("active", false);
+
+    connect(chip, &ClickableStockChip::clicked, this, [this, code, displayName]()
+            { switchToSymbol(code, displayName); });
+
+    connect(chip, &ClickableStockChip::closeRequested, this, [this, code](ClickableStockChip *chip) {
+        Q_UNUSED(chip);
+        if (m_currentCode == code) {
+            switchToSymbol(kDefaultCode, kDefaultName);
+        }
+    });
+
+    int insertIndex = m_stockTagsLayout->count() - 1;
+    if (insertIndex < 0) {
+        insertIndex = 0;
+    }
+
+    m_stockTagsLayout->insertWidget(insertIndex, chip);
+
+    chip->style()->unpolish(chip);
+    chip->style()->polish(chip);
+    chip->update();
+
+    const auto children = chip->findChildren<QWidget *>();
+    for (QWidget *child : children)
+    {
+        child->style()->unpolish(child);
+        child->style()->polish(child);
+        child->update();
+    }
+}
+
+void MainWindow::switchToSymbol(const QString &code, const QString &name)
+{
+    const QString dbPath = AppPaths::databasePath();
+
+    DataBase repo(dbPath);
+    const QVector<KLineData> bars = repo.loadDailyBars(code);
+
+    qDebug() << "[MainWindow] dbPath =" << dbPath;
+    qDebug() << "[MainWindow] switchToSymbol code =" << code
+             << ", name =" << name
+             << ", bars =" << bars.size();
+
+    if (bars.isEmpty())
+    {
+        qWarning() << "[MainWindow] no daily bars, code =" << code
+                   << ", name =" << name
+                   << ", dbPath =" << dbPath;
+        return;
+    }
+
+    m_currentCode = code;
+
+    if (m_chart)
+    {
+        m_chart->setSymbolInfo(code, name);
+        m_chart->setDailyBars(bars);
+    }
+
+    setActiveTab(code);
+}
+
+void MainWindow::setActiveTab(const QString &code)
+{
+    if (!m_stockTagsLayout) {
+        return;
+    }
+
+    for (int i = 0; i < m_stockTagsLayout->count(); ++i) {
+        QWidget *w = m_stockTagsLayout->itemAt(i)->widget();
+        auto *chip = qobject_cast<ClickableStockChip*>(w);
+        if (!chip) {
+            continue;
+        }
+
+        const bool active = (chip->property("code").toString() == code);
+        chip->setProperty("active", active);
+
+        chip->style()->unpolish(chip);
+        chip->style()->polish(chip);
+        chip->update();
+
+        const auto children = chip->findChildren<QWidget *>();
+        for (QWidget *child : children) {
+            child->style()->unpolish(child);
+            child->style()->polish(child);
+            child->update();
+        }
+    }
+}
+
+void MainWindow::resizeEvent(QResizeEvent *event)
+{
+    QWidget::resizeEvent(event);
+
+    if (m_searchPopup && m_searchPopup->isVisible()) {
+        updateSearchPopupPosition();
+    }
+}
+
 QWidget* MainWindow::createStockTagsRow()
 {
-    auto *row = new QWidget();
-    auto *layout = new QHBoxLayout(row);
-    layout->setContentsMargins(0, 0, 0, 0);
-    layout->setSpacing(10);
+    m_stockTagsRow = new QWidget();
+    m_stockTagsLayout = new QHBoxLayout(m_stockTagsRow);
+    m_stockTagsLayout->setContentsMargins(0, 0, 0, 0);
+    m_stockTagsLayout->setSpacing(10);
 
-    layout->addWidget(createClosableChip(QStringLiteral("上证指数")));
-    layout->addStretch();
+    auto *indexChip = createClosableChip(kDefaultName);
+    indexChip->setClosable(true);
+    indexChip->setProperty("code", kDefaultCode);
+    indexChip->setProperty("name", kDefaultName);
+    indexChip->setProperty("active", true);
 
-    return row;
+    connect(indexChip, &ClickableStockChip::clicked, this, [this]()
+            { switchToSymbol(kDefaultCode, kDefaultName); });
+
+    m_stockTagsLayout->addWidget(indexChip);
+    m_stockTagsLayout->addStretch();
+
+    return m_stockTagsRow;
 }
 
 QWidget* MainWindow::createChartPanel()
@@ -324,7 +619,7 @@ QWidget* MainWindow::createChartPanel()
     auto *timeGroup = new QButtonGroup(timeRow);
     timeGroup->setExclusive(true);
 
-    auto *btnDay = createTimeButton(QStringLiteral("日K"),true);
+    auto *btnDay = createTimeButton(QStringLiteral("日K"), true);
     auto *btnWeek = createTimeButton(QStringLiteral("周K"));
     auto *btnMonth = createTimeButton(QStringLiteral("月K"));
 
@@ -335,34 +630,25 @@ QWidget* MainWindow::createChartPanel()
     timeLayout->addWidget(btnDay);
     timeLayout->addWidget(btnWeek);
     timeLayout->addWidget(btnMonth);
-    timeLayout->addSpacing(10);
     timeLayout->addStretch();
 
+    layout->addWidget(timeRow);
+
+    m_chart = new DisplayInterfaceWidget();
+    layout->addWidget(m_chart, 1);
+
     connect(btnDay, &QPushButton::clicked, this, [this]() {
-        if (m_chart) {
-            m_chart->setPeriod(KLinePeriod::Daily);
-        }
+        if (m_chart) m_chart->setPeriod(KLineTime::Daily);
     });
-
     connect(btnWeek, &QPushButton::clicked, this, [this]() {
-        if (m_chart) {
-            m_chart->setPeriod(KLinePeriod::Weekly);
-        }
+        if (m_chart) m_chart->setPeriod(KLineTime::Weekly);
     });
-
     connect(btnMonth, &QPushButton::clicked, this, [this]() {
-        if (m_chart) {
-            m_chart->setPeriod(KLinePeriod::Monthly);
-        }
+        if (m_chart) m_chart->setPeriod(KLineTime::Monthly);
     });
-
-    m_chart = new TrendPreviewWidget();
 
     auto *footerTip = new QLabel(QStringLiteral("说明：本软件仅用于走势筛选与可视化，不提供买卖操作。"));
     footerTip->setStyleSheet("font: 11px 'Microsoft YaHei'; color: #9aa0aa;");
-
-    layout->addWidget(timeRow);
-    layout->addWidget(m_chart, 1);
     layout->addWidget(footerTip);
 
     addShadow(panel, 28, 6);
@@ -410,27 +696,27 @@ QWidget* MainWindow::createResultPanel()
     containerLayout->setContentsMargins(0, 0, 0, 0);
     containerLayout->setSpacing(12);
 
-    containerLayout->addWidget(new ResultCard(QStringLiteral("中际旭创"),
-                                              "300308",
+    containerLayout->addWidget(new MatchResultWidget(QStringLiteral("平安银行"),
+                                              "000001",
                                               "92"));
 
-    containerLayout->addWidget(new ResultCard(QStringLiteral("比亚迪"),
-                                              "002594",
+    containerLayout->addWidget(new MatchResultWidget(QStringLiteral("万科A"),
+                                              "000002",
                                               "88"));
 
-    containerLayout->addWidget(new ResultCard(QStringLiteral("沪电股份"),
-                                              "002463",
+    containerLayout->addWidget(new MatchResultWidget(QStringLiteral("贵州茅台"),
+                                              "600519",
                                               "85"));
 
-    containerLayout->addWidget(new ResultCard(QStringLiteral("寒武纪"),
-                                              "688256",
+    containerLayout->addWidget(new MatchResultWidget(QStringLiteral("招商银行"),
+                                              "600036",
                                               "83"));
 
     containerLayout->addStretch();
 
     scrollArea->setWidget(container);
 
-    auto *bottomInfo = new QLabel(QStringLiteral("当前示例共匹配 12 只股票"));
+    auto *bottomInfo = new QLabel(QStringLiteral("当前为主板股票示例结果"));
     bottomInfo->setStyleSheet("font: 11px 'Microsoft YaHei'; color: #9aa0aa;");
 
     layout->addLayout(headerRow);
@@ -583,6 +869,36 @@ void MainWindow::applyTheme()
             background: #a91927;
         }
 
+        QFrame#SearchPopup {
+            background: white;
+            border: 1px solid #d9dde5;
+            border-radius: 12px;
+        }
+
+        QListWidget#SearchResultList {
+            border: none;
+            background: transparent;
+            outline: none;
+            color: #2e3138;
+            font: 13px "Microsoft YaHei";
+            padding: 4px;
+        }
+
+        QListWidget#SearchResultList::item {
+            height: 34px;
+            padding: 4px 10px;
+            border-radius: 6px;
+        }
+
+        QListWidget#SearchResultList::item:hover {
+            background: #f6f8fb;
+        }
+
+        QListWidget#SearchResultList::item:selected {
+            background: #e9f1ff;
+            color: #1f2d3d;
+        }
+
         QPushButton#TitleButton {
             background: #fff1f3;
             color: #c61f2f;
@@ -609,31 +925,53 @@ void MainWindow::applyTheme()
 
         QWidget#StockChip {
             background: white;
-            border: 1px solid #c98b94;
-            border-radius: 16px;
+            border: 1px solid #d62839;
+            border-radius: 12px;
         }
 
         QWidget#StockChip:hover {
-            border: 1px solid #e9aab3;
-            background: #fff7f8;
+            background: #fff5f6;
         }
 
-        QLabel#StockChipLabel {
-            color: #5e646f;
-            font: 600 13px "Microsoft YaHei";
-            background: transparent;
+        QWidget#StockChip[active="true"] {
+            background: #d62839;
+            border: 1px solid #d62839;
         }
 
-        QToolButton#StockChipClose {
+        QWidget#StockChip QLabel#StockChipLabel {
+            color: #d62839;
+            font: 13px "Microsoft YaHei";
             background: transparent;
             border: none;
-            color: #a86a72;
-            font: 700 12px "Microsoft YaHei";
+        }
+
+        QWidget#StockChip[active="true"] QLabel#StockChipLabel {
+            color: white;
+            font: 700 13px "Microsoft YaHei";
+            background: transparent;
+            border: none;
+        }
+
+        QWidget#StockChip QToolButton#StockChipClose {
+            color: #d62839;
+            border: none;
+            background: transparent;
+            font: 13px "Microsoft YaHei";
             padding: 0;
         }
 
-        QToolButton#StockChipClose:hover {
-            color: #c71f2f;
+        QWidget#StockChip QToolButton#StockChipClose:hover {
+            color: #c62828;
+        }
+
+        QWidget#StockChip[active="true"] QToolButton#StockChipClose {
+            color: white;
+            border: none;
+            background: transparent;
+        }
+
+        QWidget#StockChip[active="true"] QToolButton#StockChipClose:hover {
+            color: #ffe6e6;
         }
 
         QWidget#Panel, QWidget#ResultPanel {

@@ -2,7 +2,7 @@
 
 #include <QDate>
 
-struct KLineBar
+struct KLineData
 {
     QDate date;
     double open = 0.0;

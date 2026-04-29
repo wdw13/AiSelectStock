@@ -1,5 +1,5 @@
-#include "ui/TrendPreviewWidget.h"
-#include "core/KLineAggregator.h"
+#include "ui/DisplayInterfaceWidget.h"
+#include "core/KLineCalculate.h"
 
 #include <QMouseEvent>
 #include <QPainter>
@@ -11,21 +11,21 @@
 namespace
 {
 
-    static QString formatXAxisMajorDate(const QDate &date, KLinePeriod period, bool forceFull, bool crossYear)
+    static QString formatXAxisMajorDate(const QDate &date, KLineTime period, bool forceFull, bool crossYear)
     {
         if (!date.isValid())
         {
             return QString();
         }
 
-        if (period == KLinePeriod::Monthly)
+        if (period == KLineTime::Monthly)
         {
             return (forceFull || crossYear)
                        ? date.toString("yyyy-MM")
                        : date.toString("yyyy-MM");
         }
 
-        if (period == KLinePeriod::Weekly)
+        if (period == KLineTime::Weekly)
         {
             return (forceFull || crossYear)
                        ? date.toString("yyyy-MM-dd")
@@ -40,7 +40,7 @@ namespace
 
 }
 
-TrendPreviewWidget::TrendPreviewWidget(QWidget *parent)
+DisplayInterfaceWidget::DisplayInterfaceWidget(QWidget *parent)
     : QWidget(parent)
 {
     setMinimumWidth(0);
@@ -49,11 +49,11 @@ TrendPreviewWidget::TrendPreviewWidget(QWidget *parent)
     setMouseTracking(true);
 }
 
-void TrendPreviewWidget::paintEvent(QPaintEvent *event)
+void DisplayInterfaceWidget::paintEvent(QPaintEvent *event)
 {
     QWidget::paintEvent(event);
 
-    const QVector<KLineBar>& data = currentBars();
+    const QVector<KLineData>& data = currentBars();
 
     if (data.isEmpty()) {
         return;
@@ -75,16 +75,41 @@ void TrendPreviewWidget::paintEvent(QPaintEvent *event)
     p.setPen(QColor("#4a4d57"));
     QFont titleFont("Microsoft YaHei", 12, QFont::Bold);
     p.setFont(titleFont);
-    p.drawText(QRectF(cardRect.left() + 24, cardRect.top() + 18, 260, 30),
+    QString periodText;
+    switch (m_period)
+    {
+    case KLineTime::Weekly:
+        periodText = QStringLiteral("周K");
+        break;
+    case KLineTime::Monthly:
+        periodText = QStringLiteral("月K");
+        break;
+    case KLineTime::Daily:
+    default:
+        periodText = QStringLiteral("日K");
+        break;
+    }
+
+    QString titleText;
+    if (!m_symbolCode.isEmpty() || !m_symbolName.isEmpty())
+    {
+        titleText = QString("%1 / %2").arg(m_symbolName, periodText);
+    }
+    else
+    {
+        titleText = QStringLiteral("K线图 / %1").arg(periodText);
+    }
+
+    p.drawText(QRectF(cardRect.left() + 24, cardRect.top() + 18, 360, 30),
                Qt::AlignLeft | Qt::AlignVCenter,
-               QStringLiteral("走势预览 / K线匹配示意"));
+               titleText);
 
     p.setPen(QColor("#8d919c"));
     QFont subFont("Microsoft YaHei", 9);
     p.setFont(subFont);
-    p.drawText(QRectF(cardRect.left() + 24, cardRect.top() + 48, 450, 22),
-               Qt::AlignLeft | Qt::AlignVCenter,
-               QStringLiteral("当前展示为界面占位图，后续可替换成真实 K 线绘制或图表组件"));
+    p.drawText(QRectF(cardRect.left() + 24, cardRect.top() + 48, 520, 22),
+           Qt::AlignLeft | Qt::AlignVCenter,
+           QStringLiteral("鼠标滚轮缩放，按住左键拖动查看历史走势"));
 
     QRectF plot = cardRect.adjusted(58, 88, -28, -48);
 
@@ -325,13 +350,13 @@ void TrendPreviewWidget::paintEvent(QPaintEvent *event)
     p.drawText(plot, Qt::AlignCenter, QStringLiteral("AISELECTSTOCK"));
 }
 
-QRectF TrendPreviewWidget::chartRect() const
+QRectF DisplayInterfaceWidget::chartRect() const
 {
     QRectF cardRect = rect().adjusted(8, 8, -8, -8);
     return cardRect.adjusted(58, 88, -28, -48);
 }
 
-void TrendPreviewWidget::wheelEvent(QWheelEvent *event)
+void DisplayInterfaceWidget::wheelEvent(QWheelEvent *event)
 {
 #if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
     const QPointF pos = event->position();
@@ -345,7 +370,7 @@ void TrendPreviewWidget::wheelEvent(QWheelEvent *event)
         return;
     }
 
-    const QVector<KLineBar>& data = currentBars();
+    const QVector<KLineData>& data = currentBars();
     if (data.isEmpty()) {
         return;
     }
@@ -379,7 +404,7 @@ void TrendPreviewWidget::wheelEvent(QWheelEvent *event)
     m_panOffsetPx = 0.0;
 }
 
-void TrendPreviewWidget::mousePressEvent(QMouseEvent *event)
+void DisplayInterfaceWidget::mousePressEvent(QMouseEvent *event)
 {
     if (event->button() == Qt::LeftButton)
     {
@@ -397,11 +422,11 @@ void TrendPreviewWidget::mousePressEvent(QMouseEvent *event)
     QWidget::mousePressEvent(event);
 }
 
-void TrendPreviewWidget::mouseMoveEvent(QMouseEvent *event)
+void DisplayInterfaceWidget::mouseMoveEvent(QMouseEvent *event)
 {
     if (m_panning)
     {
-        const QVector<KLineBar>& data = currentBars();
+        const QVector<KLineData>& data = currentBars();
         if (data.isEmpty()) {
             return;
         }
@@ -448,7 +473,7 @@ void TrendPreviewWidget::mouseMoveEvent(QMouseEvent *event)
     QWidget::mouseMoveEvent(event);
 }
 
-void TrendPreviewWidget::mouseReleaseEvent(QMouseEvent *event)
+void DisplayInterfaceWidget::mouseReleaseEvent(QMouseEvent *event)
 {
     if (event->button() == Qt::LeftButton && m_panning) {
         m_panning = false;
@@ -460,21 +485,22 @@ void TrendPreviewWidget::mouseReleaseEvent(QMouseEvent *event)
     QWidget::mouseReleaseEvent(event);
 }
 
-void TrendPreviewWidget::setDailyBars(const QVector<KLineBar>& bars)
+void DisplayInterfaceWidget::setDailyBars(const QVector<KLineData>& bars)
 {
     m_dailyBars = bars;
-    m_weeklyBars = KLineAggregator::toWeekly(m_dailyBars);
-    m_monthlyBars = KLineAggregator::toMonthly(m_dailyBars);
+    m_weeklyBars = KLineCalculate::toWeekly(m_dailyBars);
+    m_monthlyBars = KLineCalculate::toMonthly(m_dailyBars);
 
-    m_period = KLinePeriod::Daily;
+    const QVector<KLineData>& barsToShow = currentBars();
 
-    m_visibleBars = 80;
-    m_rightIndex = m_dailyBars.isEmpty() ? -1 : (m_dailyBars.size() - 1);
+    m_visibleBars = qMin(80, qMax(20, barsToShow.size()));
+    m_rightIndex = barsToShow.isEmpty() ? -1 : (barsToShow.size() - 1);
+    m_panOffsetPx = 0.0;
 
     update();
 }
 
-void TrendPreviewWidget::setPeriod(KLinePeriod period)
+void DisplayInterfaceWidget::setPeriod(KLineTime period)
 {
     if (m_period == period) {
         return;
@@ -482,29 +508,36 @@ void TrendPreviewWidget::setPeriod(KLinePeriod period)
 
     m_period = period;
 
-    const QVector<KLineBar>& bars = currentBars();
+    const QVector<KLineData>& bars = currentBars();
     m_visibleBars = qMin(80, qMax(20, bars.size()));
     m_rightIndex = bars.isEmpty() ? -1 : (bars.size() - 1);
 
     update();
 }
 
-const QVector<KLineBar>& TrendPreviewWidget::currentBars() const
+void DisplayInterfaceWidget::setSymbolInfo(const QString& code, const QString& name)
+{
+    m_symbolCode = code;
+    m_symbolName = name;
+    update();
+}
+
+const QVector<KLineData>& DisplayInterfaceWidget::currentBars() const
 {
     switch (m_period) {
-    case KLinePeriod::Weekly:
+    case KLineTime::Weekly:
         return m_weeklyBars;
-    case KLinePeriod::Monthly:
+    case KLineTime::Monthly:
         return m_monthlyBars;
-    case KLinePeriod::Daily:
+    case KLineTime::Daily:
     default:
         return m_dailyBars;
     }
 }
 
-void TrendPreviewWidget::clampRightIndex()
+void DisplayInterfaceWidget::clampRightIndex()
 {
-    const QVector<KLineBar>& bars = currentBars();
+    const QVector<KLineData>& bars = currentBars();
     if (bars.isEmpty()) {
         m_rightIndex = -1;
         return;
