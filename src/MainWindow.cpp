@@ -408,18 +408,8 @@ void MainWindow::onSearchResultClicked(QListWidgetItem *item)
     QString name = item->data(Qt::UserRole + 1).toString().trimmed();
 
     if (name.isEmpty()) {
-        const QString text = item->text();
-        int splitPos = text.indexOf(" ");
-        if (splitPos > 0) {
-            name = text.mid(splitPos).trimmed();
-        }
-    }
-
-    if (name.isEmpty()) {
         name = code;
     }
-
-    const QString text = QString("%1    %2").arg(code, name);
 
     const QString dbPath = AppPaths::databasePath();
     DataBase repo(dbPath);
@@ -696,21 +686,40 @@ QWidget* MainWindow::createResultPanel()
     containerLayout->setContentsMargins(0, 0, 0, 0);
     containerLayout->setSpacing(12);
 
-    containerLayout->addWidget(new MatchResultWidget(QStringLiteral("平安银行"),
-                                              "000001",
-                                              "92"));
+    auto *result1 = new MatchResultWidget(QStringLiteral("平安银行"), "000001", "92");
+    connect(result1, &MatchResultWidget::viewRequested, this, [this](const QString &code, const QString &name)
+            {
+    ensureStockTabExists(code, name);
+    switchToSymbol(code, name); });
+    containerLayout->addWidget(result1);
 
-    containerLayout->addWidget(new MatchResultWidget(QStringLiteral("万科A"),
-                                              "000002",
-                                              "88"));
+    auto *result2 = new MatchResultWidget(QStringLiteral("万科A"), "000002", "88");
+    connect(result2, &MatchResultWidget::viewRequested, this, [this](const QString &code, const QString &name)
+            {
+    ensureStockTabExists(code, name);
+    switchToSymbol(code, name); });
+    containerLayout->addWidget(result2);
 
-    containerLayout->addWidget(new MatchResultWidget(QStringLiteral("贵州茅台"),
-                                              "600519",
-                                              "85"));
+    auto *result3 = new MatchResultWidget(QStringLiteral("深振业A"), "000006", "85");
+    connect(result3, &MatchResultWidget::viewRequested, this, [this](const QString &code, const QString &name)
+            {
+    ensureStockTabExists(code, name);
+    switchToSymbol(code, name); });
+    containerLayout->addWidget(result3);
 
-    containerLayout->addWidget(new MatchResultWidget(QStringLiteral("招商银行"),
-                                              "600036",
-                                              "83"));
+    auto *result4 = new MatchResultWidget(QStringLiteral("全新好"), "000007", "99");
+    connect(result4, &MatchResultWidget::viewRequested, this, [this](const QString &code, const QString &name)
+            {
+    ensureStockTabExists(code, name);
+    switchToSymbol(code, name); });
+    containerLayout->addWidget(result4);
+
+    auto *result5 = new MatchResultWidget(QStringLiteral("神州高铁"), "000008", "97");
+    connect(result5, &MatchResultWidget::viewRequested, this, [this](const QString &code, const QString &name)
+            {
+    ensureStockTabExists(code, name);
+    switchToSymbol(code, name); });
+    containerLayout->addWidget(result5);
 
     containerLayout->addStretch();
 

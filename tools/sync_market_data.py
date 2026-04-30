@@ -271,4 +271,4 @@ if __name__ == "__main__":
     sync_sh_index()
     # sync_all_stocks()
     # sync_one_stock("000001")
-    sync_all_stocks(limit=20, offset=0)
+    sync_all_stocks(limit=5, offset=0)

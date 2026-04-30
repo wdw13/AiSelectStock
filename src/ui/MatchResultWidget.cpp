@@ -91,5 +91,8 @@ MatchResultWidget::MatchResultWidget(const QString &name,
     layout->addStretch();
     layout->addLayout(bottomRow);
 
+    connect(viewBtn, &QPushButton::clicked, this, [this, code, name]()
+            { emit viewRequested(code, name); });
+
     addShadow(this, 18, 4);
 }
