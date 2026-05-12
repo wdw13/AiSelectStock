@@ -12,6 +12,7 @@ class DisplayInterfaceWidget;
 class QLineEdit;
 class QListWidget;
 class QListWidgetItem;
+class QVBoxLayout;
 
 class MainWindow : public QWidget
 {
@@ -26,6 +27,25 @@ protected:
     void resizeEvent(QResizeEvent *event) override;
 
 private:
+    enum class ResultSortField
+    {
+        MatchScore,
+        Price,
+        Volume,
+        Amount,
+        Turnover
+    };
+    struct MatchStockResult
+    {
+        QString name;
+        QString code;
+
+        double score = 0.0;
+        double price = 0.0;
+        double volume = 0.0;
+        double amount = 0.0;
+        double turnover = 0.0;
+    };
     QWidget* createSidebar();
     QWidget* createTopBar();
     QWidget* createStockTagsRow();
@@ -44,6 +64,16 @@ private:
     void applyTheme();
     void updateMaxButtonState();
 
+    void initDefaultMatchResults();
+    void refreshMatchResults();
+    void sortMatchResults();
+    void showResultFilterDialog();
+
+    QString formatPrice(double value) const;
+    QString formatVolume(double value) const;
+    QString formatAmount(double value) const;
+    QString formatTurnover(double value) const;
+
 private:
     bool m_dragging = false;
     QPoint m_dragPosition;
@@ -60,4 +90,9 @@ private:
     QListWidget *m_searchResultList = nullptr;
     QFrame *m_searchPopup = nullptr;
     QString m_currentCode;
+
+    QVector<MatchStockResult> m_matchResults;
+    QVBoxLayout *m_resultListLayout = nullptr;
+    ResultSortField m_resultSortField = ResultSortField::MatchScore;
+    bool m_resultSortAscending = false;
 };

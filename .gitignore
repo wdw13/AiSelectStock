@@ -1,5 +1,6 @@
 build
 out
+data
 .vs
 
 CMakePresets.json

@@ -16,13 +16,17 @@ static void addShadow(QWidget *w, int blur = 28, int offsetY = 6)
 }
 
 MatchResultWidget::MatchResultWidget(const QString &name,
-                       const QString &code,
-                       const QString &score,
-                       QWidget *parent)
+                                     const QString &code,
+                                     const QString &score,
+                                     const QString &price,
+                                     const QString &volume,
+                                     const QString &amount,
+                                     const QString &turnover,
+                                     QWidget *parent)
     : QFrame(parent)
 {
     setObjectName("MatchResultWidget");
-    setFixedHeight(88);
+    setFixedHeight(122);
     setFrameShape(QFrame::NoFrame);
 
     auto *layout = new QVBoxLayout(this);
@@ -66,6 +70,15 @@ MatchResultWidget::MatchResultWidget(const QString &name,
         "font: 600 11px 'Microsoft YaHei';"
     );
 
+    auto *infoLabel = new QLabel(
+        QStringLiteral("价 %1    换 %2\n量 %3    额 %4")
+            .arg(price, turnover, volume, amount));
+    infoLabel->setStyleSheet(
+        "font: 10px 'Microsoft YaHei';"
+        "color:#8b909a;"
+        "line-height: 16px;");
+    infoLabel->setWordWrap(false);
+
     auto *viewBtn = new QPushButton(QStringLiteral("查看"));
     viewBtn->setCursor(Qt::PointingHandCursor);
     viewBtn->setFixedSize(68, 28);
@@ -87,7 +100,7 @@ MatchResultWidget::MatchResultWidget(const QString &name,
     bottomRow->addWidget(viewBtn);
 
     layout->addLayout(topRow);
-    // layout->addWidget(ruleLabel);
+    layout->addWidget(infoLabel);
     layout->addStretch();
     layout->addLayout(bottomRow);
 

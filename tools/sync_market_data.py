@@ -11,6 +11,7 @@ from db import (
     get_stock_codes,
 )
 from datetime import datetime, timedelta
+import time
 
 
 def normalize_code(raw_code: str) -> str:
@@ -52,23 +53,61 @@ def is_st_stock(name: str) -> bool:
 
     return "ST" in name
 
+# def normalize_daily_bars(code: str, raw_df):
+#     rows = []
+
+#     for _, row in raw_df.iterrows():
+#         trade_date = str(row["日期"]).strip()
+
+#         rows.append({
+#             "code": code,
+#             "trade_date": trade_date,
+#             "open": float(row["开盘"]),
+#             "high": float(row["最高"]),
+#             "low": float(row["最低"]),
+#             "close": float(row["收盘"]),
+#             "volume": float(row["成交量"]) if row["成交量"] is not None else None,
+#             "amount": float(row["成交额"]) if row["成交额"] is not None else None,
+#             "pct_chg": float(row["涨跌幅"]) if row["涨跌幅"] is not None else None,
+#             "turnover": float(row["换手率"]) if row["换手率"] is not None else None,
+#             "adj_type": "none",
+#         })
+
+#     return rows
+def safe_float(value):
+    if value is None:
+        return None
+
+    try:
+        # pandas 里面的 NaN 特殊处理
+        if value != value:
+            return None
+        return float(value)
+    except Exception:
+        return None
+
+
 def normalize_daily_bars(code: str, raw_df):
+    """
+    现在 fetch_daily_bars 已经把三种接口统一成这些字段：
+    code, trade_date, open, high, low, close, volume, amount, pct_chg, turnover, source
+    """
     rows = []
 
     for _, row in raw_df.iterrows():
-        trade_date = str(row["日期"]).strip()
+        trade_date = str(row["trade_date"]).strip()
 
         rows.append({
             "code": code,
             "trade_date": trade_date,
-            "open": float(row["开盘"]),
-            "high": float(row["最高"]),
-            "low": float(row["最低"]),
-            "close": float(row["收盘"]),
-            "volume": float(row["成交量"]) if row["成交量"] is not None else None,
-            "amount": float(row["成交额"]) if row["成交额"] is not None else None,
-            "pct_chg": float(row["涨跌幅"]) if row["涨跌幅"] is not None else None,
-            "turnover": float(row["换手率"]) if row["换手率"] is not None else None,
+            "open": safe_float(row["open"]),
+            "high": safe_float(row["high"]),
+            "low": safe_float(row["low"]),
+            "close": safe_float(row["close"]),
+            "volume": safe_float(row["volume"]),
+            "amount": safe_float(row["amount"]),
+            "pct_chg": safe_float(row["pct_chg"]),
+            "turnover": safe_float(row["turnover"]),
             "adj_type": "none",
         })
 
@@ -210,7 +249,7 @@ def sync_one_stock(code: str):
         if last_trade_date:
             start_date = next_day_str(last_trade_date)
         else:
-            start_date = "20000101"
+            start_date = "20220101"
 
         end_date = datetime.now().strftime("%Y%m%d")
 
@@ -264,11 +303,13 @@ def sync_all_stocks(limit: int | None = None, offset: int = 0):
         except Exception as e:
             print(f"[ERROR] code={code}, error={e}")
 
+        time.sleep(0.3)
+
 
 if __name__ == "__main__":
     ensure_database_ready()
     sync_stock_list()
     sync_sh_index()
-    # sync_all_stocks()
+    sync_all_stocks()
     # sync_one_stock("000001")
-    sync_all_stocks(limit=5, offset=0)
+    # sync_all_stocks(limit=20, offset=0)

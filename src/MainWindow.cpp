@@ -27,6 +27,11 @@
 #include <QSplitter>
 #include <QToolButton>
 #include <QVBoxLayout>
+#include <algorithm>
+#include <QComboBox>
+#include <QDialog>
+#include <QDialogButtonBox>
+#include <QFormLayout>
 
 namespace
 {
@@ -669,6 +674,10 @@ QWidget* MainWindow::createResultPanel()
     filterBtn->setCursor(Qt::PointingHandCursor);
     filterBtn->setFixedSize(78, 34);
 
+    connect(filterBtn, &QPushButton::clicked, this, [this]() {
+        showResultFilterDialog();
+    });
+
     headerRow->addWidget(title);
     headerRow->addStretch();
     headerRow->addWidget(filterBtn);
@@ -682,56 +691,24 @@ QWidget* MainWindow::createResultPanel()
     scrollArea->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
 
     auto *container = new QWidget();
-    auto *containerLayout = new QVBoxLayout(container);
-    containerLayout->setContentsMargins(0, 0, 0, 0);
-    containerLayout->setSpacing(12);
-
-    auto *result1 = new MatchResultWidget(QStringLiteral("平安银行"), "000001", "92");
-    connect(result1, &MatchResultWidget::viewRequested, this, [this](const QString &code, const QString &name)
-            {
-    ensureStockTabExists(code, name);
-    switchToSymbol(code, name); });
-    containerLayout->addWidget(result1);
-
-    auto *result2 = new MatchResultWidget(QStringLiteral("万科A"), "000002", "88");
-    connect(result2, &MatchResultWidget::viewRequested, this, [this](const QString &code, const QString &name)
-            {
-    ensureStockTabExists(code, name);
-    switchToSymbol(code, name); });
-    containerLayout->addWidget(result2);
-
-    auto *result3 = new MatchResultWidget(QStringLiteral("深振业A"), "000006", "85");
-    connect(result3, &MatchResultWidget::viewRequested, this, [this](const QString &code, const QString &name)
-            {
-    ensureStockTabExists(code, name);
-    switchToSymbol(code, name); });
-    containerLayout->addWidget(result3);
-
-    auto *result4 = new MatchResultWidget(QStringLiteral("全新好"), "000007", "99");
-    connect(result4, &MatchResultWidget::viewRequested, this, [this](const QString &code, const QString &name)
-            {
-    ensureStockTabExists(code, name);
-    switchToSymbol(code, name); });
-    containerLayout->addWidget(result4);
-
-    auto *result5 = new MatchResultWidget(QStringLiteral("神州高铁"), "000008", "97");
-    connect(result5, &MatchResultWidget::viewRequested, this, [this](const QString &code, const QString &name)
-            {
-    ensureStockTabExists(code, name);
-    switchToSymbol(code, name); });
-    containerLayout->addWidget(result5);
-
-    containerLayout->addStretch();
+    m_resultListLayout = new QVBoxLayout(container);
+    m_resultListLayout->setContentsMargins(0, 0, 0, 0);
+    m_resultListLayout->setSpacing(12);
+    m_resultListLayout->addStretch();
 
     scrollArea->setWidget(container);
 
-    auto *bottomInfo = new QLabel(QStringLiteral("当前为主板股票示例结果"));
+    auto *bottomInfo = new QLabel(QStringLiteral("默认按匹配度从高到低排序"));
     bottomInfo->setStyleSheet("font: 11px 'Microsoft YaHei'; color: #9aa0aa;");
 
     layout->addLayout(headerRow);
     layout->addWidget(subTitle);
     layout->addWidget(scrollArea, 1);
     layout->addWidget(bottomInfo);
+
+    initDefaultMatchResults();
+    sortMatchResults();
+    refreshMatchResults();
 
     addShadow(panel, 28, 6);
     return panel;
@@ -793,6 +770,222 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
     }
 
     return QWidget::eventFilter(watched, event);
+}
+
+void MainWindow::initDefaultMatchResults()
+{
+    m_matchResults.clear();
+
+    struct SeedResult
+    {
+        QString name;
+        QString code;
+        double score;
+    };
+
+    const QVector<SeedResult> seeds = {
+        {QStringLiteral("平安银行"), QStringLiteral("000001"), 92.0},
+        {QStringLiteral("万科A"), QStringLiteral("000002"), 88.0},
+        {QStringLiteral("深振业A"), QStringLiteral("000006"), 85.0},
+        {QStringLiteral("全新好"), QStringLiteral("000007"), 99.0},
+        {QStringLiteral("神州高铁"), QStringLiteral("000008"), 97.0},
+        {QStringLiteral("国药一致"), QStringLiteral("000028"), 97.0},
+    };
+
+    const QString dbPath = AppPaths::databasePath();
+    DataBase repo(dbPath);
+
+    for (const auto &seed : seeds)
+    {
+        MatchStockResult result;
+        result.name = seed.name;
+        result.code = seed.code;
+        result.score = seed.score;
+
+        const QVector<KLineData> bars = repo.loadDailyBars(seed.code);
+        if (!bars.isEmpty())
+        {
+            const KLineData last = bars.last();
+            result.price = last.close;
+            result.volume = last.volume;
+            result.amount = last.amount;
+            result.turnover = last.turnover;
+        }
+
+        m_matchResults.push_back(result);
+    }
+}
+
+void MainWindow::sortMatchResults()
+{
+    std::sort(m_matchResults.begin(), m_matchResults.end(),
+              [this](const MatchStockResult &a, const MatchStockResult &b) {
+        double left = 0.0;
+        double right = 0.0;
+
+        switch (m_resultSortField)
+        {
+        case ResultSortField::MatchScore:
+            left = a.score;
+            right = b.score;
+            break;
+        case ResultSortField::Price:
+            left = a.price;
+            right = b.price;
+            break;
+        case ResultSortField::Volume:
+            left = a.volume;
+            right = b.volume;
+            break;
+        case ResultSortField::Amount:
+            left = a.amount;
+            right = b.amount;
+            break;
+        case ResultSortField::Turnover:
+            left = a.turnover;
+            right = b.turnover;
+            break;
+        }
+
+        if (m_resultSortAscending) {
+            return left < right;
+        }
+
+        return left > right;
+    });
+}
+
+void MainWindow::refreshMatchResults()
+{
+    if (!m_resultListLayout) {
+        return;
+    }
+
+    while (m_resultListLayout->count() > 0)
+    {
+        QLayoutItem *item = m_resultListLayout->takeAt(0);
+
+        if (QWidget *w = item->widget()) {
+            w->deleteLater();
+        }
+
+        delete item;
+    }
+
+    for (const auto &result : m_matchResults)
+    {
+        auto *card = new MatchResultWidget(
+            result.name,
+            result.code,
+            QString::number(result.score, 'f', 0),
+            formatPrice(result.price),
+            formatVolume(result.volume),
+            formatAmount(result.amount),
+            formatTurnover(result.turnover)
+        );
+
+        connect(card, &MatchResultWidget::viewRequested, this,
+                [this](const QString &code, const QString &name) {
+            ensureStockTabExists(code, name);
+            switchToSymbol(code, name);
+        });
+
+        m_resultListLayout->addWidget(card);
+    }
+
+    m_resultListLayout->addStretch();
+}
+
+void MainWindow::showResultFilterDialog()
+{
+    QDialog dialog(this);
+    dialog.setWindowTitle(QStringLiteral("筛选选股结果"));
+    dialog.setModal(true);
+    dialog.resize(260, 140);
+
+    auto *layout = new QVBoxLayout(&dialog);
+
+    auto *formLayout = new QFormLayout();
+
+    auto *fieldBox = new QComboBox(&dialog);
+    fieldBox->addItem(QStringLiteral("匹配度"), static_cast<int>(ResultSortField::MatchScore));
+    fieldBox->addItem(QStringLiteral("股票价格"), static_cast<int>(ResultSortField::Price));
+    fieldBox->addItem(QStringLiteral("成交量"), static_cast<int>(ResultSortField::Volume));
+    fieldBox->addItem(QStringLiteral("成交额"), static_cast<int>(ResultSortField::Amount));
+    fieldBox->addItem(QStringLiteral("换手率"), static_cast<int>(ResultSortField::Turnover));
+
+    auto *orderBox = new QComboBox(&dialog);
+    orderBox->addItem(QStringLiteral("从高到低"), false);
+    orderBox->addItem(QStringLiteral("从低到高"), true);
+
+    fieldBox->setCurrentIndex(static_cast<int>(m_resultSortField));
+    orderBox->setCurrentIndex(m_resultSortAscending ? 1 : 0);
+
+    formLayout->addRow(QStringLiteral("排序字段："), fieldBox);
+    formLayout->addRow(QStringLiteral("排序方式："), orderBox);
+
+    auto *buttons = new QDialogButtonBox(
+        QDialogButtonBox::Ok | QDialogButtonBox::Cancel,
+        &dialog
+    );
+
+    buttons->button(QDialogButtonBox::Ok)->setText(QStringLiteral("确定"));
+    buttons->button(QDialogButtonBox::Cancel)->setText(QStringLiteral("取消"));
+
+    connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+
+    layout->addLayout(formLayout);
+    layout->addWidget(buttons);
+
+    if (dialog.exec() != QDialog::Accepted) {
+        return;
+    }
+
+    m_resultSortField = static_cast<ResultSortField>(
+        fieldBox->currentData().toInt()
+    );
+
+    m_resultSortAscending = orderBox->currentData().toBool();
+
+    sortMatchResults();
+    refreshMatchResults();
+}
+
+QString MainWindow::formatPrice(double value) const
+{
+    if (value <= 0.0) {
+        return QStringLiteral("--");
+    }
+
+    return QString::number(value, 'f', 2);
+}
+
+QString MainWindow::formatVolume(double value) const
+{
+    if (value <= 0.0) {
+        return QStringLiteral("--");
+    }
+
+    return QStringLiteral("%1万手").arg(QString::number(value / 10000.0, 'f', 2));
+}
+
+QString MainWindow::formatAmount(double value) const
+{
+    if (value <= 0.0) {
+        return QStringLiteral("--");
+    }
+
+    return QStringLiteral("%1亿").arg(QString::number(value / 100000000.0, 'f', 2));
+}
+
+QString MainWindow::formatTurnover(double value) const
+{
+    if (value <= 0.0) {
+        return QStringLiteral("--");
+    }
+
+    return QStringLiteral("%1%").arg(QString::number(value, 'f', 2));
 }
 
 void MainWindow::applyTheme()

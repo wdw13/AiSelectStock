@@ -30,7 +30,7 @@ QVector<KLineData> DataBase::loadDailyBars(const QString& code) const
 
         QSqlQuery query(db);
         query.prepare(R"(
-            SELECT trade_date, open, high, low, close, volume, amount
+            SELECT trade_date, open, high, low, close, volume, amount, turnover
             FROM daily_bars
             WHERE code = :code AND adj_type = 'none'
             ORDER BY trade_date ASC
@@ -52,7 +52,7 @@ QVector<KLineData> DataBase::loadDailyBars(const QString& code) const
             bar.close = query.value(4).toDouble();
             bar.volume = query.value(5).toDouble();
             bar.amount = query.value(6).toDouble();
-
+            bar.turnover = query.value(7).toDouble();
             if (bar.date.isValid()) {
                 bars.push_back(bar);
             }
