@@ -22,13 +22,14 @@ def get_conn(db_path: Path | str | None = None) -> sqlite3.Connection:
     db_path = Path(db_path)
     ensure_parent_dir(db_path)
 
-    conn = sqlite3.connect(str(db_path))
+    conn = sqlite3.connect(str(db_path), timeout=60.0)
     conn.row_factory = sqlite3.Row
 
     # 常用优化参数
     conn.execute("PRAGMA journal_mode=WAL;")
     conn.execute("PRAGMA synchronous=NORMAL;")
     conn.execute("PRAGMA foreign_keys=ON;")
+    conn.execute("PRAGMA busy_timeout=60000;")
 
     return conn
 

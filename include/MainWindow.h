@@ -13,6 +13,8 @@ class QLineEdit;
 class QListWidget;
 class QListWidgetItem;
 class QVBoxLayout;
+class QProcess;
+class QProgressDialog;
 
 class MainWindow : public QWidget
 {
@@ -34,6 +36,12 @@ private:
         Volume,
         Amount,
         Turnover
+    };
+
+    enum class StockSelectMode
+    {
+        Ai,
+        Traditional
     };
     struct MatchStockResult
     {
@@ -69,6 +77,23 @@ private:
     void sortMatchResults();
     void showResultFilterDialog();
 
+    void startSyncMarketData();
+    void handleSyncProcessOutput();
+    void handleSyncProcessErrorOutput();
+    void handleSyncProgressLine(const QString &line);
+    void finishSyncMarketData(int exitCode, int exitStatus);
+    QString findSyncMarketDataScript() const;
+    void refreshCurrentSymbolAfterSync();
+
+    void showStockSelectDialog();
+    void runStockSelect(StockSelectMode mode);
+
+    // 这两个就是后面接真实 AI选股 / 传统选股 的预留接口
+    QVector<MatchStockResult> requestAiSelectResults();
+    QVector<MatchStockResult> requestTraditionalSelectResults();
+
+    MatchStockResult buildMatchResult(const QString &code, const QString &name, double score) const;
+
     QString formatPrice(double value) const;
     QString formatVolume(double value) const;
     QString formatAmount(double value) const;
@@ -95,4 +120,10 @@ private:
     QVBoxLayout *m_resultListLayout = nullptr;
     ResultSortField m_resultSortField = ResultSortField::MatchScore;
     bool m_resultSortAscending = false;
+
+    QPushButton *m_syncDataBtn = nullptr;
+    QProcess *m_syncProcess = nullptr;
+    QProgressDialog *m_syncProgress = nullptr;
+    QString m_syncOutputBuffer;
+    QString m_syncErrorBuffer;
 };

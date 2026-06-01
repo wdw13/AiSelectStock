@@ -11,8 +11,30 @@ from db import (
     get_stock_codes,
 )
 from datetime import datetime, timedelta
-import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import argparse
+import threading
 
+DB_WRITE_LOCK = threading.Lock()
+
+
+def emit_phase(message: str):
+    """
+    输出阶段信息给 Qt。
+    Qt 进度框可以读取这种格式：
+    PHASE|正在获取股票列表...
+    """
+    print(f"PHASE|{message}", flush=True)
+
+
+def emit_progress(current: int, total: int, code: str, status: str, message: str):
+    safe_message = str(message).replace("\n", " ").replace("\r", " ").replace("|", " ")
+
+    # 失败时不把具体报错传给 Qt，避免界面显示一大段异常
+    if status == "failed":
+        safe_message = "同步失败，已跳过"
+
+    print(f"PROGRESS|{current}|{total}|{code}|{status}|{safe_message}", flush=True)
 
 def normalize_code(raw_code: str) -> str:
     code = str(raw_code).strip().lower()
@@ -138,22 +160,24 @@ def normalize_index_daily_bars(code: str, raw_df):
 def sync_sh_index():
     code = "sh000001"
 
-    print("[index] syncing 上证指数 sh000001 ...")
+    emit_phase("正在同步上证指数 sh000001 ...")
 
     raw_df = fetch_index_daily_bars(code)
 
     if raw_df is None or raw_df.empty:
-        print("[index] no data")
+        emit_phase("上证指数没有新数据")
         return
 
     rows = normalize_index_daily_bars(code, raw_df)
 
     conn = get_conn()
     try:
-        upsert_daily_bars(conn, rows)
-        latest_date = rows[-1]["trade_date"]
-        update_sync_state(conn, code, latest_date, "success", None)
-        print(f"[index] inserted/updated {len(rows)} rows, latest_date={latest_date}")
+        with DB_WRITE_LOCK:
+            upsert_daily_bars(conn, rows)
+            latest_date = rows[-1]["trade_date"]
+            update_sync_state(conn, code, latest_date, "success", None)
+
+        emit_phase(f"上证指数同步完成，更新 {len(rows)} 行，最新日期 {latest_date}")
     finally:
         conn.close()
 
@@ -214,10 +238,10 @@ def ensure_database_ready():
         conn.close()
 
 def sync_stock_list():
-    print("[1/4] fetching stock list...")
+    emit_phase("正在获取股票列表...")
     raw_df = fetch_stock_list()
 
-    print("[2/4] normalizing stock rows...")
+    emit_phase("正在整理股票列表...")
     rows = normalize_stock_rows(raw_df)
 
     if not rows:
@@ -225,15 +249,16 @@ def sync_stock_list():
 
     codes = [row["code"] for row in rows]
 
-    print(f"[3/4] writing {len(rows)} stocks into database...")
+    emit_phase(f"正在写入 {len(rows)} 只股票到数据库...")
     conn = get_conn()
     try:
-        upsert_stocks(conn, rows)
-        init_sync_state_for_stocks(conn, codes)
+        with DB_WRITE_LOCK:
+            upsert_stocks(conn, rows)
+            init_sync_state_for_stocks(conn, codes)
     finally:
         conn.close()
 
-    print("[4/4] stock list sync done.")
+    emit_phase("股票列表同步完成")
 
 
 def next_day_str(date_str: str) -> str:
@@ -243,6 +268,8 @@ def next_day_str(date_str: str) -> str:
 
 def sync_one_stock(code: str):
     conn = get_conn()
+    last_trade_date = None
+
     try:
         last_trade_date = get_last_trade_date(conn, code, "none")
 
@@ -253,40 +280,61 @@ def sync_one_stock(code: str):
 
         end_date = datetime.now().strftime("%Y%m%d")
 
-        print(f"[sync_one] code={code}, start_date={start_date}, end_date={end_date}")
-
         if start_date > end_date:
-            update_sync_state(conn, code, last_trade_date, "success", "already up to date")
-            print("[sync_one] already up to date")
-            return
+            with DB_WRITE_LOCK:
+                update_sync_state(conn, code, last_trade_date, "success", "already up to date")
+
+            return {
+                "code": code,
+                "status": "success",
+                "message": "already up to date",
+            }
 
         raw_df = fetch_daily_bars(code, start_date, end_date)
 
         if raw_df is None or raw_df.empty:
-            update_sync_state(conn, code, last_trade_date, "success", "no new data")
-            print("[sync_one] no new data")
-            return
+            with DB_WRITE_LOCK:
+                update_sync_state(conn, code, last_trade_date, "success", "no new data")
+
+            return {
+                "code": code,
+                "status": "success",
+                "message": "no new data",
+            }
 
         rows = normalize_daily_bars(code, raw_df)
 
         if not rows:
-            update_sync_state(conn, code, last_trade_date, "failed", "normalized rows empty")
+            with DB_WRITE_LOCK:
+                update_sync_state(conn, code, last_trade_date, "failed", "normalized rows empty")
+
             raise RuntimeError("normalized rows empty")
 
-        upsert_daily_bars(conn, rows)
-
         latest_date = rows[-1]["trade_date"]
-        update_sync_state(conn, code, latest_date, "success", None)
 
-        print(f"[sync_one] inserted/updated {len(rows)} rows, latest_date={latest_date}")
+        with DB_WRITE_LOCK:
+            upsert_daily_bars(conn, rows)
+            update_sync_state(conn, code, latest_date, "success", None)
+
+        return {
+            "code": code,
+            "status": "success",
+            "message": f"updated {len(rows)} rows, latest={latest_date}",
+        }
 
     except Exception as e:
-        update_sync_state(conn, code, last_trade_date, "failed", str(e))
+        try:
+            with DB_WRITE_LOCK:
+                update_sync_state(conn, code, last_trade_date, "failed", str(e))
+        except Exception:
+            pass
+
         raise
+
     finally:
         conn.close()
 
-def sync_all_stocks(limit: int | None = None, offset: int = 0):
+def sync_all_stocks(limit: int | None = None, offset: int = 0, workers: int = 6):
     conn = get_conn()
     try:
         codes = get_stock_codes(conn, limit=limit, offset=offset)
@@ -294,22 +342,59 @@ def sync_all_stocks(limit: int | None = None, offset: int = 0):
         conn.close()
 
     total = len(codes)
-    print(f"[sync_all] total codes = {total}")
+    workers = max(1, int(workers))
 
-    for i, code in enumerate(codes, start=1):
-        print(f"[{i}/{total}] syncing {code} ...")
-        try:
-            sync_one_stock(code)
-        except Exception as e:
-            print(f"[ERROR] code={code}, error={e}")
+    emit_phase(f"准备同步 {total} 只股票，线程数={workers}")
 
-        time.sleep(0.3)
+    if total <= 0:
+        emit_progress(0, 0, "ALL", "success", "没有需要同步的股票")
+        return
+
+    done = 0
+    failed = 0
+
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        future_map = {
+            executor.submit(sync_one_stock, code): code
+            for code in codes
+        }
+
+        for future in as_completed(future_map):
+            code = future_map[future]
+            done += 1
+
+            try:
+                result = future.result()
+                emit_progress(
+                    done,
+                    total,
+                    code,
+                    result.get("status", "success"),
+                    result.get("message", "success"),
+                )
+            except Exception as e:
+                failed += 1
+                emit_progress(done, total, code, "failed", str(e))
+
+    if failed > 0:
+        emit_phase(f"股票同步完成，但有 {failed} 只失败")
+    else:
+        emit_phase("股票同步完成，全部成功")
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="同步股票列表、上证指数和日K数据")
+    parser.add_argument("--workers", type=int, default=6, help="同步股票日K数据的线程数")
+    parser.add_argument("--limit", type=int, default=None, help="只同步前 N 只股票，测试用")
+    parser.add_argument("--offset", type=int, default=0, help="从第几只股票开始同步，测试用")
+
+    args = parser.parse_args()
+
     ensure_database_ready()
     sync_stock_list()
     sync_sh_index()
-    sync_all_stocks()
-    # sync_one_stock("000001")
-    # sync_all_stocks(limit=20, offset=0)
+    sync_all_stocks(
+        limit=args.limit,
+        offset=args.offset,
+        workers=args.workers,
+    )

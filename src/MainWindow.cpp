@@ -22,6 +22,7 @@
 #include <QPainterPath>
 #include <QPaintEvent>
 #include <QPushButton>
+#include <QRadioButton>
 #include <QScrollArea>
 #include <QScrollBar>
 #include <QSplitter>
@@ -32,6 +33,10 @@
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QFormLayout>
+#include <QFileInfo>
+#include <QProcess>
+#include <QProcessEnvironment>
+#include <QProgressDialog>
 
 namespace
 {
@@ -169,6 +174,13 @@ QWidget* MainWindow::createSidebar()
     group->addButton(mainSelectBtn);
     group->addButton(aiSelectBtn);
 
+    connect(aiSelectBtn, &QPushButton::clicked, this, [this, mainSelectBtn]()
+            {
+    showStockSelectDialog();
+    if (mainSelectBtn) {
+        mainSelectBtn->setChecked(true);
+    } });
+
     auto *userCard = new QWidget();
     userCard->setObjectName("UserCard");
     userCard->setAttribute(Qt::WA_StyledBackground, true);
@@ -238,6 +250,16 @@ QWidget* MainWindow::createTopBar()
     searchLayout->addWidget(m_searchEdit, 1);
     searchLayout->addWidget(searchBtn);
 
+    m_syncDataBtn = new QPushButton(QStringLiteral("同步股票数据"));
+    m_syncDataBtn->setObjectName("SyncDataButton");
+    m_syncDataBtn->setCursor(Qt::PointingHandCursor);
+    m_syncDataBtn->setFixedHeight(44);
+    m_syncDataBtn->setMinimumWidth(132);
+    m_syncDataBtn->setToolTip(QStringLiteral("调用 Python 脚本同步股票列表、指数和日K数据"));
+
+    connect(m_syncDataBtn, &QPushButton::clicked, this, [this]()
+            { startSyncMarketData(); });
+
     m_minBtn = new QPushButton(QStringLiteral("—"));
     m_minBtn->setObjectName("TitleButton");
     m_minBtn->setCursor(Qt::PointingHandCursor);
@@ -299,6 +321,7 @@ QWidget* MainWindow::createTopBar()
     onSearchResultClicked(item); });
 
     layout->addStretch(1);
+    layout->addWidget(m_syncDataBtn);
     layout->addWidget(searchWrap);
     layout->addStretch(1);
     layout->addWidget(m_minBtn);
@@ -952,6 +975,468 @@ void MainWindow::showResultFilterDialog()
     refreshMatchResults();
 }
 
+void MainWindow::showStockSelectDialog()
+{
+    QDialog dialog(this);
+    dialog.setWindowTitle(QStringLiteral("选股方式"));
+    dialog.setModal(true);
+    dialog.resize(360, 230);
+    dialog.setObjectName("StockSelectDialog");
+
+    auto *layout = new QVBoxLayout(&dialog);
+    layout->setContentsMargins(22, 20, 22, 18);
+    layout->setSpacing(14);
+
+    auto *title = new QLabel(QStringLiteral("请选择选股方式"), &dialog);
+    title->setStyleSheet("font: 700 20px 'Microsoft YaHei'; color: #2d3138;");
+
+    auto *desc = new QLabel(
+        QStringLiteral("这里先保留 AI选股 和 传统选股 两个接口，后面可以直接接入你的真实算法。"),
+        &dialog
+    );
+    desc->setWordWrap(true);
+    desc->setStyleSheet("font: 12px 'Microsoft YaHei'; color: #7d838e;");
+
+    auto *aiRadio = new QRadioButton(QStringLiteral("AI选股"), &dialog);
+    auto *traditionalRadio = new QRadioButton(QStringLiteral("传统选股"), &dialog);
+    aiRadio->setChecked(true);
+
+    aiRadio->setStyleSheet("font: 600 15px 'Microsoft YaHei'; color: #2d3138;");
+    traditionalRadio->setStyleSheet("font: 600 15px 'Microsoft YaHei'; color: #2d3138;");
+
+    auto *buttons = new QDialogButtonBox(
+        QDialogButtonBox::Ok | QDialogButtonBox::Cancel,
+        &dialog
+    );
+
+    buttons->button(QDialogButtonBox::Ok)->setText(QStringLiteral("开始选股"));
+    buttons->button(QDialogButtonBox::Cancel)->setText(QStringLiteral("取消"));
+
+    connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+
+    layout->addWidget(title);
+    layout->addWidget(desc);
+    layout->addSpacing(4);
+    layout->addWidget(aiRadio);
+    layout->addWidget(traditionalRadio);
+    layout->addStretch();
+    layout->addWidget(buttons);
+
+    dialog.setStyleSheet(R"(
+        QDialog#StockSelectDialog {
+            background: #fffafa;
+        }
+        QRadioButton::indicator {
+            width: 16px;
+            height: 16px;
+        }
+        QPushButton {
+            min-width: 82px;
+            min-height: 30px;
+            border-radius: 15px;
+            padding: 0 14px;
+            font: 600 12px "Microsoft YaHei";
+            background: #fff3f5;
+            color: #bc1d2c;
+            border: 1px solid #efc1c8;
+        }
+        QPushButton:hover {
+            background: #ffe8eb;
+        }
+    )");
+
+    if (dialog.exec() != QDialog::Accepted) {
+        return;
+    }
+
+    const StockSelectMode mode = aiRadio->isChecked()
+        ? StockSelectMode::Ai
+        : StockSelectMode::Traditional;
+
+    runStockSelect(mode);
+}
+
+void MainWindow::runStockSelect(StockSelectMode mode)
+{
+    // 统一入口：弹窗点“开始选股”以后走这里。
+    // 后面你接真实 AI / 传统选股时，不用改右侧结果 UI，只要改下面两个接口函数。
+    if (mode == StockSelectMode::Ai) {
+        m_matchResults = requestAiSelectResults();
+    } else {
+        m_matchResults = requestTraditionalSelectResults();
+    }
+
+    sortMatchResults();
+    refreshMatchResults();
+}
+
+QVector<MainWindow::MatchStockResult> MainWindow::requestAiSelectResults()
+{
+    // AI选股接口预留：
+    // 后面你的 AI 模型 / HTTP接口 / Python脚本结果，在这里转换成 MatchStockResult 即可。
+    // 现在先放几条演示数据，保证主界面的“选股结果”能刷新出来。
+
+    QVector<MatchStockResult> results;
+
+    results.push_back(buildMatchResult(QStringLiteral("000001"), QStringLiteral("平安银行"), 95.0));
+    results.push_back(buildMatchResult(QStringLiteral("600000"), QStringLiteral("浦发银行"), 91.0));
+    results.push_back(buildMatchResult(QStringLiteral("600004"), QStringLiteral("白云机场"), 88.0));
+    results.push_back(buildMatchResult(QStringLiteral("600006"), QStringLiteral("东风股份"), 84.0));
+
+    return results;
+}
+
+QVector<MainWindow::MatchStockResult> MainWindow::requestTraditionalSelectResults()
+{
+    // 传统选股接口预留：
+    // 后面你的均线、成交量、换手率等规则结果，在这里转换成 MatchStockResult 即可。
+    // 现在先放几条演示数据，保证主界面的“选股结果”能刷新出来。
+
+    QVector<MatchStockResult> results;
+
+    results.push_back(buildMatchResult(QStringLiteral("600007"), QStringLiteral("中国国贸"), 90.0));
+    results.push_back(buildMatchResult(QStringLiteral("600008"), QStringLiteral("首创环保"), 86.0));
+    results.push_back(buildMatchResult(QStringLiteral("600009"), QStringLiteral("上海机场"), 82.0));
+    results.push_back(buildMatchResult(QStringLiteral("600010"), QStringLiteral("包钢股份"), 78.0));
+
+    return results;
+}
+
+MainWindow::MatchStockResult MainWindow::buildMatchResult(const QString &code,
+                                                          const QString &name,
+                                                          double score) const
+{
+    MatchStockResult result;
+    result.code = code;
+    result.name = name;
+    result.score = score;
+
+    const QString dbPath = AppPaths::databasePath();
+    DataBase repo(dbPath);
+    const QVector<KLineData> bars = repo.loadDailyBars(code);
+
+    if (!bars.isEmpty()) {
+        const KLineData last = bars.last();
+        result.price = last.close;
+        result.volume = last.volume;
+        result.amount = last.amount;
+        result.turnover = last.turnover;
+    }
+
+    return result;
+}
+
+void MainWindow::startSyncMarketData()
+{
+    if (m_syncProcess && m_syncProcess->state() != QProcess::NotRunning) {
+        QMessageBox::information(this,
+                                 QStringLiteral("正在同步"),
+                                 QStringLiteral("股票数据正在同步中，请等待当前任务完成。"));
+        return;
+    }
+
+    const QString scriptPath = findSyncMarketDataScript();
+    if (scriptPath.isEmpty()) {
+        QMessageBox::warning(this,
+                             QStringLiteral("脚本不存在"),
+                             QStringLiteral("没有找到 tools/sync_market_data.py，请确认 tools 目录在项目目录下。"));
+        return;
+    }
+
+    m_syncOutputBuffer.clear();
+    m_syncErrorBuffer.clear();
+
+    m_syncProgress = new QProgressDialog(QStringLiteral("正在准备同步股票数据..."),
+                                         QStringLiteral("取消"),
+                                         0,
+                                         0,
+                                         this);
+    m_syncProgress->setWindowTitle(QStringLiteral("同步股票数据"));
+    m_syncProgress->setWindowModality(Qt::WindowModal);
+    m_syncProgress->setMinimumDuration(0);
+    m_syncProgress->setAutoClose(false);
+    m_syncProgress->setAutoReset(false);
+    m_syncProgress->resize(420, 120);
+    m_syncProgress->show();
+
+    m_syncProcess = new QProcess(this);
+
+    QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+    env.insert(QStringLiteral("PYTHONIOENCODING"), QStringLiteral("utf-8"));
+    env.insert(QStringLiteral("PYTHONUNBUFFERED"), QStringLiteral("1"));
+    m_syncProcess->setProcessEnvironment(env);
+
+    const QFileInfo scriptInfo(scriptPath);
+    m_syncProcess->setWorkingDirectory(scriptInfo.absolutePath());
+
+    connect(m_syncProgress, &QProgressDialog::canceled, this, [this]() {
+        if (m_syncProcess && m_syncProcess->state() != QProcess::NotRunning) {
+            m_syncProgress->setLabelText(QStringLiteral("正在取消同步..."));
+            m_syncProcess->kill();
+        }
+    });
+
+    connect(m_syncProcess, &QProcess::readyReadStandardOutput,
+            this, &MainWindow::handleSyncProcessOutput);
+
+    connect(m_syncProcess, &QProcess::readyReadStandardError,
+            this, &MainWindow::handleSyncProcessErrorOutput);
+
+    connect(m_syncProcess,
+            QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
+            this,
+            [this](int exitCode, QProcess::ExitStatus exitStatus) {
+        finishSyncMarketData(exitCode, static_cast<int>(exitStatus));
+    });
+
+    if (m_syncDataBtn) {
+        m_syncDataBtn->setEnabled(false);
+    }
+
+#ifdef Q_OS_WIN
+    const QString program = QStringLiteral("python");
+#else
+    const QString program = QStringLiteral("python3");
+#endif
+
+    QStringList args;
+    args << QStringLiteral("-u")
+         << scriptPath
+         << QStringLiteral("--workers")
+         << QStringLiteral("6");
+
+    m_syncProcess->start(program, args);
+
+    if (!m_syncProcess->waitForStarted(3000)) {
+        if (m_syncDataBtn) {
+            m_syncDataBtn->setEnabled(true);
+        }
+
+        if (m_syncProgress) {
+            m_syncProgress->close();
+            m_syncProgress->deleteLater();
+            m_syncProgress = nullptr;
+        }
+
+        m_syncProcess->deleteLater();
+        m_syncProcess = nullptr;
+
+        QMessageBox::warning(this,
+                             QStringLiteral("启动失败"),
+                             QStringLiteral("无法启动 Python。请确认已经安装 Python，并且 python 命令已加入 PATH。"));
+    }
+}
+
+void MainWindow::handleSyncProcessOutput()
+{
+    if (!m_syncProcess) {
+        return;
+    }
+
+    m_syncOutputBuffer += QString::fromUtf8(m_syncProcess->readAllStandardOutput());
+
+    while (true) {
+        const int newlineIndex = m_syncOutputBuffer.indexOf('\n');
+        if (newlineIndex < 0) {
+            break;
+        }
+
+        QString line = m_syncOutputBuffer.left(newlineIndex).trimmed();
+        m_syncOutputBuffer.remove(0, newlineIndex + 1);
+
+        if (line.isEmpty()) {
+            continue;
+        }
+
+        qDebug() << "[sync stdout]" << line;
+        handleSyncProgressLine(line);
+    }
+}
+
+void MainWindow::handleSyncProcessErrorOutput()
+{
+    if (!m_syncProcess) {
+        return;
+    }
+
+    m_syncErrorBuffer += QString::fromUtf8(m_syncProcess->readAllStandardError());
+
+    while (true) {
+        const int newlineIndex = m_syncErrorBuffer.indexOf('\n');
+        if (newlineIndex < 0) {
+            break;
+        }
+
+        QString line = m_syncErrorBuffer.left(newlineIndex).trimmed();
+        m_syncErrorBuffer.remove(0, newlineIndex + 1);
+
+        if (!line.isEmpty()) {
+            qWarning() << "[sync stderr]" << line;
+        }
+    }
+}
+
+void MainWindow::handleSyncProgressLine(const QString &line)
+{
+    if (!m_syncProgress) {
+        return;
+    }
+
+    if (line.startsWith(QStringLiteral("PHASE|"))) {
+        const QStringList parts = line.split('|');
+        if (parts.size() >= 2) {
+            m_syncProgress->setLabelText(parts.mid(1).join(QStringLiteral(" | ")));
+        }
+        return;
+    }
+
+    if (!line.startsWith(QStringLiteral("PROGRESS|"))) {
+        return;
+    }
+
+    const QStringList parts = line.split('|');
+    if (parts.size() < 6) {
+        return;
+    }
+
+    const int current = parts.value(1).toInt();
+    const int total = parts.value(2).toInt();
+    const QString code = parts.value(3);
+    const QString status = parts.value(4);
+    const QString message = parts.mid(5).join(QStringLiteral(" | "));
+
+    if (total > 0 && m_syncProgress->maximum() != total) {
+        m_syncProgress->setRange(0, total);
+    }
+
+    m_syncProgress->setValue(current);
+
+    QString statusText;
+    if (status == QStringLiteral("success"))
+    {
+        statusText = QStringLiteral("成功");
+    }
+    else if (status == QStringLiteral("failed"))
+    {
+        statusText = QStringLiteral("失败");
+    }
+    else
+    {
+        statusText = status;
+    }
+
+    QString displayMessage = message;
+    if (status == QStringLiteral("failed"))
+    {
+        displayMessage = QStringLiteral("同步失败，已跳过，继续同步下一只股票");
+    }
+
+    m_syncProgress->setLabelText(
+        QStringLiteral("正在同步股票数据：%1 / %2\n当前：%3，状态：%4\n%5")
+            .arg(current)
+            .arg(total)
+            .arg(code)
+            .arg(statusText)
+            .arg(displayMessage)
+    );
+}
+
+void MainWindow::refreshCurrentSymbolAfterSync()
+{
+    QString code = m_currentCode.trimmed();
+
+    if (code.isEmpty()) {
+        code = kDefaultCode;
+    }
+
+    QString name = (code == kDefaultCode) ? kDefaultName : code;
+
+    if (m_stockTagsLayout) {
+        for (int i = 0; i < m_stockTagsLayout->count(); ++i) {
+            QWidget *w = m_stockTagsLayout->itemAt(i)->widget();
+            auto *chip = qobject_cast<ClickableStockChip *>(w);
+
+            if (!chip) {
+                continue;
+            }
+
+            if (chip->property("code").toString() == code) {
+                const QString chipName = chip->property("name").toString().trimmed();
+                if (!chipName.isEmpty()) {
+                    name = chipName;
+                }
+                break;
+            }
+        }
+    }
+
+    switchToSymbol(code, name);
+}
+
+void MainWindow::finishSyncMarketData(int exitCode, int exitStatus)
+{
+    Q_UNUSED(exitStatus);
+
+    if (m_syncDataBtn) {
+        m_syncDataBtn->setEnabled(true);
+    }
+
+    const bool ok = (exitCode == 0);
+
+    if (m_syncProgress) {
+        if (m_syncProgress->maximum() > 0) {
+            m_syncProgress->setValue(m_syncProgress->maximum());
+        }
+
+        m_syncProgress->close();
+        m_syncProgress->deleteLater();
+        m_syncProgress = nullptr;
+    }
+
+    if (m_syncProcess) {
+        m_syncProcess->deleteLater();
+        m_syncProcess = nullptr;
+    }
+
+    if (ok) {
+    initDefaultMatchResults();
+    sortMatchResults();
+    refreshMatchResults();
+
+    refreshCurrentSymbolAfterSync();
+
+    QCoreApplication::processEvents();
+
+    QMessageBox::information(this,
+                             QStringLiteral("同步完成"),
+                             QStringLiteral("股票数据同步完成，界面已刷新。"));
+}
+}
+
+QString MainWindow::findSyncMarketDataScript() const
+{
+    const QString appDir = QCoreApplication::applicationDirPath();
+
+    const QStringList candidates = {
+        QDir(appDir).filePath("../../../../tools/sync_market_data.py"),
+        QDir(appDir).filePath("../../../tools/sync_market_data.py"),
+        QDir(appDir).filePath("../../tools/sync_market_data.py"),
+        QDir(appDir).filePath("../tools/sync_market_data.py"),
+        QDir(appDir).filePath("tools/sync_market_data.py"),
+        QDir::current().filePath("tools/sync_market_data.py")
+    };
+
+    for (const QString &path : candidates) {
+        const QString cleanPath = QDir::cleanPath(path);
+        if (QFileInfo::exists(cleanPath)) {
+            return cleanPath;
+        }
+    }
+
+    return QString();
+}
+
 QString MainWindow::formatPrice(double value) const
 {
     if (value <= 0.0) {
@@ -1031,6 +1516,24 @@ void MainWindow::applyTheme()
         QPushButton#SideButton:checked {
             background: rgba(255,255,255,0.18);
             color: white;
+        }
+
+        QPushButton#SyncDataButton {
+            background: #d62839;
+            border: none;
+            border-radius: 18px;
+            color: white;
+            padding: 0 16px;
+            font: 700 14px "Microsoft YaHei";
+        }
+
+        QPushButton#SyncDataButton:hover {
+            background: #bf1f30;
+        }
+
+        QPushButton#SyncDataButton:disabled {
+            background: #d8a5ab;
+            color: rgba(255,255,255,0.75);
         }
 
         QWidget#SearchWrap {
