@@ -22,6 +22,9 @@ set(PROJECT_SOURCES
     core/KLineCalculate.cpp
     ../include/core/KLineCalculate.h
 
+    alg/StockSelectorAlg.cpp
+    ../include/alg/StockSelectorAlg.h
+
     ../include/model/KLineData.h
     ../include/model/KLineTime.h
 )

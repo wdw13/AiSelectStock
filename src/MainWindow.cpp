@@ -5,6 +5,7 @@
 #include "model/KLineTime.h"
 #include "data/DataBase.h"
 #include "data/DataPath.h"
+#include "alg/StockSelectorAlg.h"
 #include <QCoreApplication>
 #include <QDir>
 #include <QDebug>
@@ -37,6 +38,7 @@
 #include <QProcess>
 #include <QProcessEnvironment>
 #include <QProgressDialog>
+#include <QApplication>
 
 namespace
 {
@@ -807,12 +809,12 @@ void MainWindow::initDefaultMatchResults()
     };
 
     const QVector<SeedResult> seeds = {
-        {QStringLiteral("平安银行"), QStringLiteral("000001"), 92.0},
-        {QStringLiteral("万科A"), QStringLiteral("000002"), 88.0},
-        {QStringLiteral("深振业A"), QStringLiteral("000006"), 85.0},
-        {QStringLiteral("全新好"), QStringLiteral("000007"), 99.0},
-        {QStringLiteral("神州高铁"), QStringLiteral("000008"), 97.0},
-        {QStringLiteral("国药一致"), QStringLiteral("000028"), 97.0},
+        // {QStringLiteral("平安银行"), QStringLiteral("000001"), 92.0},
+        // {QStringLiteral("万科A"), QStringLiteral("000002"), 88.0},
+        // {QStringLiteral("深振业A"), QStringLiteral("000006"), 85.0},
+        // {QStringLiteral("全新好"), QStringLiteral("000007"), 99.0},
+        // {QStringLiteral("神州高铁"), QStringLiteral("000008"), 97.0},
+        // {QStringLiteral("国药一致"), QStringLiteral("000028"), 97.0},
     };
 
     const QString dbPath = AppPaths::databasePath();
@@ -1059,46 +1061,179 @@ void MainWindow::showStockSelectDialog()
 
 void MainWindow::runStockSelect(StockSelectMode mode)
 {
-    // 统一入口：弹窗点“开始选股”以后走这里。
-    // 后面你接真实 AI / 传统选股时，不用改右侧结果 UI，只要改下面两个接口函数。
+    const QString title = mode == StockSelectMode::Ai
+        ? QStringLiteral("AI选股")
+        : QStringLiteral("传统选股");
+
+    QProgressDialog progressDialog(this);
+    progressDialog.setWindowTitle(QStringLiteral("选股中"));
+    progressDialog.setLabelText(QStringLiteral("正在准备选股数据..."));
+    progressDialog.setCancelButton(nullptr);
+    progressDialog.setWindowModality(Qt::ApplicationModal);
+    progressDialog.setMinimumDuration(0);
+    progressDialog.setAutoClose(false);
+    progressDialog.setAutoReset(false);
+    progressDialog.setRange(0, 100);
+    progressDialog.setValue(0);
+    progressDialog.resize(420, 120);
+    progressDialog.show();
+
+    QApplication::processEvents();
+
     if (mode == StockSelectMode::Ai) {
-        m_matchResults = requestAiSelectResults();
+        m_matchResults = requestAiSelectResults(&progressDialog);
     } else {
-        m_matchResults = requestTraditionalSelectResults();
+        m_matchResults = requestTraditionalSelectResults(&progressDialog);
     }
+
+    progressDialog.setLabelText(QStringLiteral("选股完成，正在刷新结果..."));
+    progressDialog.setValue(progressDialog.maximum());
+    QApplication::processEvents();
+
+    progressDialog.close();
 
     sortMatchResults();
     refreshMatchResults();
+
+    if (m_matchResults.isEmpty()) {
+        QMessageBox::information(this,
+                                 title,
+                                 QStringLiteral("暂无符合条件的股票。请先同步股票数据，或者适当放宽选股条件。"));
+    }
 }
 
-QVector<MainWindow::MatchStockResult> MainWindow::requestAiSelectResults()
+QVector<MainWindow::MatchStockResult> MainWindow::requestAiSelectResults(QProgressDialog *progressDialog)
 {
-    // AI选股接口预留：
-    // 后面你的 AI 模型 / HTTP接口 / Python脚本结果，在这里转换成 MatchStockResult 即可。
-    // 现在先放几条演示数据，保证主界面的“选股结果”能刷新出来。
-
     QVector<MatchStockResult> results;
 
-    results.push_back(buildMatchResult(QStringLiteral("000001"), QStringLiteral("平安银行"), 95.0));
-    results.push_back(buildMatchResult(QStringLiteral("600000"), QStringLiteral("浦发银行"), 91.0));
-    results.push_back(buildMatchResult(QStringLiteral("600004"), QStringLiteral("白云机场"), 88.0));
-    results.push_back(buildMatchResult(QStringLiteral("600006"), QStringLiteral("东风股份"), 84.0));
+    const QString dbPath = AppPaths::databasePath();
+    DataBase repo(dbPath);
+
+    const QVector<StockItem> stocks = repo.loadAllStocks();
+
+    const int total = static_cast<int>(stocks.size());
+
+    if (progressDialog) {
+        progressDialog->setRange(0, total);
+        progressDialog->setValue(0);
+        progressDialog->setLabelText(QStringLiteral("正在进行 AI选股..."));
+        QApplication::processEvents();
+    }
+
+    QVector<StockSelectAlgResult> algResults;
+
+    for (int i = 0; i < total; ++i)
+    {
+        const StockItem &stock = stocks[i];
+
+        if (progressDialog) {
+            progressDialog->setValue(i);
+            progressDialog->setLabelText(QStringLiteral("AI选股中：%1 / %2\n正在分析：%3 %4")
+                                             .arg(i + 1)
+                                             .arg(total)
+                                             .arg(stock.code)
+                                             .arg(stock.name));
+            QApplication::processEvents();
+        }
+
+        const QVector<KLineData> bars = repo.loadDailyBars(stock.code);
+
+        StockSelectAlgResult algResult;
+
+        if (StockSelectorAlg::evaluateAiStock(stock, bars, &algResult)) {
+            algResults.push_back(algResult);
+        }
+    }
+
+    if (progressDialog) {
+        progressDialog->setValue(total);
+        progressDialog->setLabelText(QStringLiteral("AI选股计算完成，正在排序..."));
+        QApplication::processEvents();
+    }
+
+    algResults = StockSelectorAlg::sortAndLimit(algResults, 20);
+
+    for (const StockSelectAlgResult &item : algResults)
+    {
+        MatchStockResult result;
+        result.code = item.code;
+        result.name = item.name;
+        result.score = item.score;
+        result.price = item.price;
+        result.volume = item.volume;
+        result.amount = item.amount;
+        result.turnover = item.turnover;
+
+        results.push_back(result);
+    }
 
     return results;
 }
 
-QVector<MainWindow::MatchStockResult> MainWindow::requestTraditionalSelectResults()
+QVector<MainWindow::MatchStockResult> MainWindow::requestTraditionalSelectResults(QProgressDialog *progressDialog)
 {
-    // 传统选股接口预留：
-    // 后面你的均线、成交量、换手率等规则结果，在这里转换成 MatchStockResult 即可。
-    // 现在先放几条演示数据，保证主界面的“选股结果”能刷新出来。
-
     QVector<MatchStockResult> results;
 
-    results.push_back(buildMatchResult(QStringLiteral("600007"), QStringLiteral("中国国贸"), 90.0));
-    results.push_back(buildMatchResult(QStringLiteral("600008"), QStringLiteral("首创环保"), 86.0));
-    results.push_back(buildMatchResult(QStringLiteral("600009"), QStringLiteral("上海机场"), 82.0));
-    results.push_back(buildMatchResult(QStringLiteral("600010"), QStringLiteral("包钢股份"), 78.0));
+    const QString dbPath = AppPaths::databasePath();
+    DataBase repo(dbPath);
+
+    const QVector<StockItem> stocks = repo.loadAllStocks();
+
+    const int total = static_cast<int>(stocks.size());
+
+    if (progressDialog) {
+        progressDialog->setRange(0, total);
+        progressDialog->setValue(0);
+        progressDialog->setLabelText(QStringLiteral("正在进行传统选股..."));
+        QApplication::processEvents();
+    }
+
+    QVector<StockSelectAlgResult> algResults;
+
+    for (int i = 0; i < total; ++i)
+    {
+        const StockItem &stock = stocks[i];
+
+        if (progressDialog) {
+            progressDialog->setValue(i);
+            progressDialog->setLabelText(QStringLiteral("传统选股中：%1 / %2\n正在分析：%3 %4")
+                                             .arg(i + 1)
+                                             .arg(total)
+                                             .arg(stock.code)
+                                             .arg(stock.name));
+            QApplication::processEvents();
+        }
+
+        const QVector<KLineData> bars = repo.loadDailyBars(stock.code);
+
+        StockSelectAlgResult algResult;
+
+        if (StockSelectorAlg::evaluateTraditionalStock(stock, bars, &algResult)) {
+            algResults.push_back(algResult);
+        }
+    }
+
+    if (progressDialog) {
+        progressDialog->setValue(total);
+        progressDialog->setLabelText(QStringLiteral("传统选股计算完成，正在排序..."));
+        QApplication::processEvents();
+    }
+
+    algResults = StockSelectorAlg::sortAndLimit(algResults, 20);
+
+    for (const StockSelectAlgResult &item : algResults)
+    {
+        MatchStockResult result;
+        result.code = item.code;
+        result.name = item.name;
+        result.score = item.score;
+        result.price = item.price;
+        result.volume = item.volume;
+        result.amount = item.amount;
+        result.turnover = item.turnover;
+
+        results.push_back(result);
+    }
 
     return results;
 }
