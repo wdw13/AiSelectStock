@@ -180,6 +180,274 @@ namespace
         out->amount = last.amount;
         out->turnover = last.turnover;
     }
+
+    static double averageCloseAt(const QVector<KLineData> &bars, int period, int endIndex)
+{
+    if (period <= 0 || endIndex < 0 || endIndex - period + 1 < 0) {
+        return 0.0;
+    }
+
+    double sum = 0.0;
+
+    for (int i = endIndex - period + 1; i <= endIndex; ++i) {
+        sum += bars[i].close;
+    }
+
+    return sum / period;
+}
+
+static bool hasRecentLimitUp(const QVector<KLineData> &bars, int days)
+{
+    const int n = static_cast<int>(bars.size());
+    const int start = std::max(1, n - days);
+
+    for (int i = start; i < n; ++i) {
+        if (bars[i - 1].close <= 0.0) {
+            continue;
+        }
+
+        const double pct = (bars[i].close - bars[i - 1].close) / bars[i - 1].close * 100.0;
+
+        if (pct >= 9.5) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+static bool isShortBottomRecovered(const QVector<KLineData> &bars)
+{
+    const int n = static_cast<int>(bars.size());
+
+    if (n < 80) {
+        return false;
+    }
+
+    const int lookback = 30;
+    const int start = std::max(0, n - lookback);
+
+    double bottomLow = bars[start].low;
+    int bottomIndex = start;
+
+    for (int i = start; i < n; ++i) {
+        if (bars[i].low < bottomLow) {
+            bottomLow = bars[i].low;
+            bottomIndex = i;
+        }
+    }
+
+    const int bottomOffset = n - 1 - bottomIndex;
+    const double lastClose = bars.last().close;
+
+    if (bottomLow <= 0.0 || lastClose <= 0.0) {
+        return false;
+    }
+
+    const double recoverPct = (lastClose - bottomLow) / bottomLow * 100.0;
+
+    // 底部不能是今天刚出现，也不能太久远
+    if (bottomOffset < 3 || bottomOffset > 20) {
+        return false;
+    }
+
+    // 已经从短期底部反弹，但不能涨太高
+    if (recoverPct < 5.0 || recoverPct > 35.0) {
+        return false;
+    }
+
+    return true;
+}
+
+static bool isPriceRisingAlongMa5(const QVector<KLineData> &bars)
+{
+    const int n = static_cast<int>(bars.size());
+
+    if (n < 30) {
+        return false;
+    }
+
+    int aboveMa5Count = 0;
+
+    for (int i = n - 7; i < n; ++i) {
+        const double ma5 = averageCloseAt(bars, 5, i);
+
+        if (ma5 <= 0.0) {
+            continue;
+        }
+
+        const double close = bars[i].close;
+        const double distance = std::abs(close - ma5) / ma5 * 100.0;
+
+        // 收盘在 5 日线上方，或者非常贴近 5 日线，也算沿 5 日线
+        if (close >= ma5 || distance <= 2.0) {
+            ++aboveMa5Count;
+        }
+    }
+
+    const double currentMa5 = averageClose(bars, 5);
+    const double prevMa5 = averageClose(bars, 5, 1);
+
+    if (currentMa5 <= 0.0 || prevMa5 <= 0.0) {
+        return false;
+    }
+
+    // 最近 7 天至少 5 天沿 MA5 运行，并且 MA5 自身向上
+    return aboveMa5Count >= 5 && currentMa5 > prevMa5;
+}
+
+static bool isMa5Ma10Ma20UpWithoutCross(const QVector<KLineData> &bars)
+{
+    const int n = static_cast<int>(bars.size());
+
+    if (n < 40) {
+        return false;
+    }
+
+    const double ma5 = averageClose(bars, 5);
+    const double ma10 = averageClose(bars, 10);
+    const double ma20 = averageClose(bars, 20);
+
+    const double prevMa5 = averageClose(bars, 5, 1);
+    const double prevMa10 = averageClose(bars, 10, 1);
+    const double prevMa20 = averageClose(bars, 20, 1);
+
+    if (ma5 <= 0.0 || ma10 <= 0.0 || ma20 <= 0.0) {
+        return false;
+    }
+
+    // 当前三条均线必须多头排列
+    if (!(ma5 > ma10 && ma10 > ma20)) {
+        return false;
+    }
+
+    // 三条均线必须同时向上
+    if (!(ma5 > prevMa5 && ma10 > prevMa10 && ma20 > prevMa20)) {
+        return false;
+    }
+
+    // 最近 8 个交易日不能发生均线交叉，保持 MA5 > MA10 > MA20
+    for (int i = n - 8; i < n; ++i) {
+        const double m5 = averageCloseAt(bars, 5, i);
+        const double m10 = averageCloseAt(bars, 10, i);
+        const double m20 = averageCloseAt(bars, 20, i);
+
+        if (!(m5 > m10 && m10 > m20)) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+static QVector<double> buildWeeklyCloseSeries(const QVector<KLineData> &bars)
+{
+    QVector<double> weeklyCloses;
+
+    if (bars.isEmpty()) {
+        return weeklyCloses;
+    }
+
+    int currentYear = 0;
+    int currentWeek = -1;
+    double lastCloseInWeek = 0.0;
+
+    for (const KLineData &bar : bars) {
+        if (!bar.date.isValid()) {
+            continue;
+        }
+
+        int year = 0;
+        const int week = bar.date.weekNumber(&year);
+
+        if (currentWeek == -1) {
+            currentYear = year;
+            currentWeek = week;
+            lastCloseInWeek = bar.close;
+            continue;
+        }
+
+        if (year == currentYear && week == currentWeek) {
+            lastCloseInWeek = bar.close;
+        } else {
+            weeklyCloses.push_back(lastCloseInWeek);
+
+            currentYear = year;
+            currentWeek = week;
+            lastCloseInWeek = bar.close;
+        }
+    }
+
+    if (lastCloseInWeek > 0.0) {
+        weeklyCloses.push_back(lastCloseInWeek);
+    }
+
+    return weeklyCloses;
+}
+
+static QVector<double> emaSeries(const QVector<double> &values, int period)
+{
+    QVector<double> result;
+
+    if (values.isEmpty() || period <= 0) {
+        return result;
+    }
+
+    result.reserve(values.size());
+
+    const double alpha = 2.0 / (period + 1.0);
+    double ema = values.first();
+
+    result.push_back(ema);
+
+    for (int i = 1; i < values.size(); ++i) {
+        ema = values[i] * alpha + ema * (1.0 - alpha);
+        result.push_back(ema);
+    }
+
+    return result;
+}
+
+static bool isWeeklyMacdUpTrend(const QVector<KLineData> &bars)
+{
+    const QVector<double> weeklyCloses = buildWeeklyCloseSeries(bars);
+
+    if (weeklyCloses.size() < 35) {
+        return false;
+    }
+
+    const QVector<double> ema12 = emaSeries(weeklyCloses, 12);
+    const QVector<double> ema26 = emaSeries(weeklyCloses, 26);
+
+    if (ema12.size() != ema26.size()) {
+        return false;
+    }
+
+    QVector<double> dif;
+    dif.reserve(weeklyCloses.size());
+
+    for (int i = 0; i < weeklyCloses.size(); ++i) {
+        dif.push_back(ema12[i] - ema26[i]);
+    }
+
+    const QVector<double> dea = emaSeries(dif, 9);
+
+    if (dea.size() < 4 || dif.size() < 4) {
+        return false;
+    }
+
+    const int n = static_cast<int>(dif.size());
+
+    const double hist0 = dif[n - 1] - dea[n - 1];
+    const double hist1 = dif[n - 2] - dea[n - 2];
+    const double hist2 = dif[n - 3] - dea[n - 3];
+
+    const bool difUp = dif[n - 1] > dif[n - 2] && dif[n - 2] >= dif[n - 3];
+    const bool histImprove = hist0 > hist1 && hist1 >= hist2;
+
+    // 周线 MACD 上涨趋势：DIF 连续改善，且柱体同步改善
+    return difUp && histImprove;
+}
 }
 
 bool StockSelectorAlg::evaluateAiStock(const StockItem &stock,
@@ -433,6 +701,93 @@ bool StockSelectorAlg::evaluateTraditionalStock(const StockItem &stock,
     out->score = score;
     out->strategyName = strategies.join(QStringLiteral(" / "));
     out->reason = QStringLiteral("命中策略：%1").arg(out->strategyName);
+
+    return true;
+}
+
+bool StockSelectorAlg::evaluateBsStock(const StockItem &stock,
+                                       const QVector<KLineData> &bars,
+                                       StockSelectAlgResult *out)
+{
+    if (!out) {
+        return false;
+    }
+
+    if (bars.size() < 160) {
+        return false;
+    }
+
+    const KLineData &last = bars.last();
+
+    if (last.close <= 0.0 || last.volume <= 0.0) {
+        return false;
+    }
+
+    const bool bottomRecovered = isShortBottomRecovered(bars);
+    const bool alongMa5 = isPriceRisingAlongMa5(bars);
+    const bool maUpNoCross = isMa5Ma10Ma20UpWithoutCross(bars);
+    const bool recentLimitUp = hasRecentLimitUp(bars, 20);
+    const bool weeklyMacdUp = isWeeklyMacdUpTrend(bars);
+
+    if (!(bottomRecovered &&
+          alongMa5 &&
+          maUpNoCross &&
+          recentLimitUp &&
+          weeklyMacdUp)) {
+        return false;
+    }
+
+    const double ma5 = averageClose(bars, 5);
+    const double ma10 = averageClose(bars, 10);
+    const double ma20 = averageClose(bars, 20);
+
+    const double ret20 = pctChangeFromDaysAgo(bars, 20);
+    const double drawdown60 = maxDrawdownInLast(bars, 60);
+    const double volatility30 = volatilityInLast(bars, 30);
+
+    double score = 80.0;
+
+    // 越贴近 5 日线，越符合“沿 5 日线逐步上涨”
+    if (ma5 > 0.0) {
+        const double distanceToMa5 = std::abs(last.close - ma5) / ma5 * 100.0;
+
+        if (distanceToMa5 <= 3.0) {
+            score += 8.0;
+        } else if (distanceToMa5 <= 6.0) {
+            score += 4.0;
+        } else {
+            score -= 5.0;
+        }
+    }
+
+    // 三条均线越顺，分数越高
+    if (ma5 > ma10 && ma10 > ma20) {
+        score += 5.0;
+    }
+
+    // 近 20 日上涨不能过热
+    if (ret20 > 0.0 && ret20 <= 25.0) {
+        score += 5.0;
+    } else if (ret20 > 35.0) {
+        score -= 8.0;
+    }
+
+    // 回撤和波动率控制
+    if (drawdown60 > 30.0) {
+        score -= 8.0;
+    }
+
+    if (volatility30 > 6.0) {
+        score -= 5.0;
+    }
+
+    score = std::clamp(score, 0.0, 100.0);
+
+    fillLastQuote(stock, bars, out);
+
+    out->score = score;
+    out->strategyName = QStringLiteral("BS专属");
+    out->reason = QStringLiteral("短期底部反弹，沿5日线上行，MA5/10/20多头向上，近日涨停，周线MACD上行");
 
     return true;
 }

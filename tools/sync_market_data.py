@@ -14,6 +14,18 @@ from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import argparse
 import threading
+import sys
+import traceback
+import os
+
+os.environ["PYTHONIOENCODING"] = "utf-8"
+os.environ["PYTHONUTF8"] = "1"
+
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 DB_WRITE_LOCK = threading.Lock()
 
@@ -35,6 +47,35 @@ def emit_progress(current: int, total: int, code: str, status: str, message: str
         safe_message = "同步失败，已跳过"
 
     print(f"PROGRESS|{current}|{total}|{code}|{status}|{safe_message}", flush=True)
+
+def emit_error(message: str):
+    safe_message = str(message).replace("\n", " ").replace("\r", " ").replace("|", " ")
+    print(f"ERROR|{safe_message}", flush=True)
+
+
+def load_runtime_dependencies():
+    """
+    延迟加载 akshare / pandas。
+    这样 Qt 界面可以先看到“正在加载行情接口依赖”，
+    不会出现进度框弹一下就消失且没有提示。
+    """
+    global fetch_stock_list
+    global fetch_daily_bars
+    global fetch_index_daily_bars
+
+    emit_phase("正在加载行情接口依赖 akshare / pandas，请稍候...")
+
+    from ak_client import (
+        fetch_stock_list as _fetch_stock_list,
+        fetch_daily_bars as _fetch_daily_bars,
+        fetch_index_daily_bars as _fetch_index_daily_bars,
+    )
+
+    fetch_stock_list = _fetch_stock_list
+    fetch_daily_bars = _fetch_daily_bars
+    fetch_index_daily_bars = _fetch_index_daily_bars
+
+    emit_phase("行情接口依赖加载完成")
 
 def normalize_code(raw_code: str) -> str:
     code = str(raw_code).strip().lower()
@@ -390,11 +431,26 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    ensure_database_ready()
-    sync_stock_list()
-    sync_sh_index()
-    sync_all_stocks(
-        limit=args.limit,
-        offset=args.offset,
-        workers=args.workers,
-    )
+    try:
+        emit_phase("同步脚本已启动")
+        load_runtime_dependencies()
+
+        ensure_database_ready()
+        sync_stock_list()
+        sync_sh_index()
+        sync_all_stocks(
+            limit=args.limit,
+            offset=args.offset,
+            workers=args.workers,
+        )
+
+        emit_phase("全部同步流程完成")
+
+    except KeyboardInterrupt:
+        emit_error("同步被手动中断")
+        sys.exit(130)
+
+    except Exception:
+        err = traceback.format_exc()
+        emit_error(err)
+        sys.exit(1)

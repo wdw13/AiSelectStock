@@ -32,6 +32,10 @@ public:
                                          const QVector<KLineData> &bars,
                                          StockSelectAlgResult *out);
 
+    static bool evaluateBsStock(const StockItem &stock,
+                            const QVector<KLineData> &bars,
+                            StockSelectAlgResult *out);
+
     static QVector<StockSelectAlgResult> sortAndLimit(QVector<StockSelectAlgResult> results,
                                                       int limit = 20);
 };

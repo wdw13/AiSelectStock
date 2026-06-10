@@ -3,6 +3,10 @@ out
 data
 .vs
 
+package
+dist
+sync_market_data.spec
+
 CMakePresets.json
 CMakeUserPresets.json
 

@@ -41,7 +41,8 @@ private:
     enum class StockSelectMode
     {
         Ai,
-        Traditional
+        Traditional,
+        BsExclusive
     };
     struct MatchStockResult
     {
@@ -91,6 +92,7 @@ private:
     // 这两个就是后面接真实 AI选股 / 传统选股 的预留接口
     QVector<MatchStockResult> requestAiSelectResults(QProgressDialog *progressDialog = nullptr);
     QVector<MatchStockResult> requestTraditionalSelectResults(QProgressDialog *progressDialog = nullptr);
+    QVector<MatchStockResult> requestBsSelectResults(QProgressDialog *progressDialog = nullptr);
 
     MatchStockResult buildMatchResult(const QString &code, const QString &name, double score) const;
 
@@ -126,4 +128,5 @@ private:
     QProgressDialog *m_syncProgress = nullptr;
     QString m_syncOutputBuffer;
     QString m_syncErrorBuffer;
+    QString m_syncLastErrorText;
 };

@@ -27,6 +27,18 @@
 #     return df
 import time
 import random
+
+import sys
+import os
+
+# Windows 下 pandas 导入时会调用 platform.machine()
+# 有些机器这里会卡在 WMI 查询，导致同步脚本启动阶段假死。
+# 这里提前给 platform.machine 一个稳定返回值，避免进入慢 WMI。
+if sys.platform.startswith("win"):
+    import platform
+    _arch = os.environ.get("PROCESSOR_ARCHITECTURE", "AMD64")
+    platform.machine = lambda: _arch
+    
 import akshare as ak
 import pandas as pd
 

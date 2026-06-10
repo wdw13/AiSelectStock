@@ -4,6 +4,12 @@ import sqlite3
 
 
 def get_project_root() -> Path:
+    import os
+
+    env_root = os.environ.get("AISELECTSTOCK_ROOT")
+    if env_root:
+        return Path(env_root).resolve()
+
     return Path(__file__).resolve().parent.parent
 
 

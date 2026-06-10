@@ -1001,6 +1001,7 @@ void MainWindow::showStockSelectDialog()
 
     auto *aiRadio = new QRadioButton(QStringLiteral("AI选股"), &dialog);
     auto *traditionalRadio = new QRadioButton(QStringLiteral("传统选股"), &dialog);
+    auto *bsRadio = new QRadioButton(QStringLiteral("BS专属"), &dialog);
     aiRadio->setChecked(true);
 
     aiRadio->setStyleSheet("font: 600 15px 'Microsoft YaHei'; color: #2d3138;");
@@ -1022,6 +1023,7 @@ void MainWindow::showStockSelectDialog()
     layout->addSpacing(4);
     layout->addWidget(aiRadio);
     layout->addWidget(traditionalRadio);
+    layout->addWidget(bsRadio);
     layout->addStretch();
     layout->addWidget(buttons);
 
@@ -1052,18 +1054,30 @@ void MainWindow::showStockSelectDialog()
         return;
     }
 
-    const StockSelectMode mode = aiRadio->isChecked()
-        ? StockSelectMode::Ai
-        : StockSelectMode::Traditional;
+    StockSelectMode mode = StockSelectMode::Traditional;
+
+    if (aiRadio->isChecked()) {
+        mode = StockSelectMode::Ai;
+    } else if (bsRadio->isChecked()) {
+        mode = StockSelectMode::BsExclusive;
+    } else {
+        mode = StockSelectMode::Traditional;
+    }
 
     runStockSelect(mode);
 }
 
 void MainWindow::runStockSelect(StockSelectMode mode)
 {
-    const QString title = mode == StockSelectMode::Ai
-        ? QStringLiteral("AI选股")
-        : QStringLiteral("传统选股");
+    QString title;
+
+    if (mode == StockSelectMode::Ai) {
+        title = QStringLiteral("AI选股");
+    } else if (mode == StockSelectMode::BsExclusive) {
+        title = QStringLiteral("BS专属");
+    } else {
+        title = QStringLiteral("传统选股");
+    }
 
     QProgressDialog progressDialog(this);
     progressDialog.setWindowTitle(QStringLiteral("选股中"));
@@ -1082,6 +1096,8 @@ void MainWindow::runStockSelect(StockSelectMode mode)
 
     if (mode == StockSelectMode::Ai) {
         m_matchResults = requestAiSelectResults(&progressDialog);
+    } else if (mode == StockSelectMode::BsExclusive) {
+        m_matchResults = requestBsSelectResults(&progressDialog);
     } else {
         m_matchResults = requestTraditionalSelectResults(&progressDialog);
     }
@@ -1238,6 +1254,74 @@ QVector<MainWindow::MatchStockResult> MainWindow::requestTraditionalSelectResult
     return results;
 }
 
+QVector<MainWindow::MatchStockResult> MainWindow::requestBsSelectResults(QProgressDialog *progressDialog)
+{
+    QVector<MatchStockResult> results;
+
+    const QString dbPath = AppPaths::databasePath();
+    DataBase repo(dbPath);
+
+    const QVector<StockItem> stocks = repo.loadAllStocks();
+
+    const int total = static_cast<int>(stocks.size());
+
+    if (progressDialog) {
+        progressDialog->setRange(0, total);
+        progressDialog->setValue(0);
+        progressDialog->setLabelText(QStringLiteral("正在进行 BS专属选股..."));
+        QApplication::processEvents();
+    }
+
+    QVector<StockSelectAlgResult> algResults;
+
+    for (int i = 0; i < total; ++i)
+    {
+        const StockItem &stock = stocks[i];
+
+        if (progressDialog) {
+            progressDialog->setValue(i);
+            progressDialog->setLabelText(QStringLiteral("BS专属选股中：%1 / %2\n正在分析：%3 %4")
+                                             .arg(i + 1)
+                                             .arg(total)
+                                             .arg(stock.code)
+                                             .arg(stock.name));
+            QApplication::processEvents();
+        }
+
+        const QVector<KLineData> bars = repo.loadDailyBars(stock.code);
+
+        StockSelectAlgResult algResult;
+
+        if (StockSelectorAlg::evaluateBsStock(stock, bars, &algResult)) {
+            algResults.push_back(algResult);
+        }
+    }
+
+    if (progressDialog) {
+        progressDialog->setValue(total);
+        progressDialog->setLabelText(QStringLiteral("BS专属选股计算完成，正在排序..."));
+        QApplication::processEvents();
+    }
+
+    algResults = StockSelectorAlg::sortAndLimit(algResults, 20);
+
+    for (const StockSelectAlgResult &item : algResults)
+    {
+        MatchStockResult result;
+        result.code = item.code;
+        result.name = item.name;
+        result.score = item.score;
+        result.price = item.price;
+        result.volume = item.volume;
+        result.amount = item.amount;
+        result.turnover = item.turnover;
+
+        results.push_back(result);
+    }
+
+    return results;
+}
+
 MainWindow::MatchStockResult MainWindow::buildMatchResult(const QString &code,
                                                           const QString &name,
                                                           double score) const
@@ -1271,16 +1355,31 @@ void MainWindow::startSyncMarketData()
         return;
     }
 
-    const QString scriptPath = findSyncMarketDataScript();
-    if (scriptPath.isEmpty()) {
-        QMessageBox::warning(this,
-                             QStringLiteral("脚本不存在"),
-                             QStringLiteral("没有找到 tools/sync_market_data.py，请确认 tools 目录在项目目录下。"));
-        return;
-    }
+    const QString appDir = QCoreApplication::applicationDirPath();
+
+    const QString packagedSyncExe = QDir(appDir)
+        .filePath(QStringLiteral("tools/sync_market_data/sync_market_data.exe"));
+    
+    const bool usePackagedSyncExe = QFileInfo::exists(packagedSyncExe);
+
+    QString scriptPath;
+
+    if (!usePackagedSyncExe) {
+        scriptPath = findSyncMarketDataScript();
+
+        if (scriptPath.isEmpty()) {
+            QMessageBox::warning(this,
+                                 QStringLiteral("同步工具不存在"),
+                                 QStringLiteral("没有找到同步工具。\n\n"
+                                                "开发环境需要 tools/sync_market_data.py。\n"
+                                                "打包环境需要 tools/sync_market_data/sync_market_data.exe。"));
+            return;
+        }
+    }    
 
     m_syncOutputBuffer.clear();
     m_syncErrorBuffer.clear();
+    m_syncLastErrorText.clear();
 
     m_syncProgress = new QProgressDialog(QStringLiteral("正在准备同步股票数据..."),
                                          QStringLiteral("取消"),
@@ -1300,10 +1399,18 @@ void MainWindow::startSyncMarketData()
     QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
     env.insert(QStringLiteral("PYTHONIOENCODING"), QStringLiteral("utf-8"));
     env.insert(QStringLiteral("PYTHONUNBUFFERED"), QStringLiteral("1"));
+    env.insert(QStringLiteral("PYTHONUTF8"), QStringLiteral("1"));
+    env.insert(QStringLiteral("PYTHONNOUSERSITE"), QStringLiteral("1"));
+    env.insert(QStringLiteral("AISELECTSTOCK_ROOT"), QCoreApplication::applicationDirPath());
     m_syncProcess->setProcessEnvironment(env);
 
-    const QFileInfo scriptInfo(scriptPath);
-    m_syncProcess->setWorkingDirectory(scriptInfo.absolutePath());
+    if (usePackagedSyncExe) {
+        QFileInfo exeInfo(packagedSyncExe);
+        m_syncProcess->setWorkingDirectory(exeInfo.absolutePath());
+    } else {
+        QFileInfo scriptInfo(scriptPath);
+        m_syncProcess->setWorkingDirectory(scriptInfo.absolutePath());
+    }    
 
     connect(m_syncProgress, &QProgressDialog::canceled, this, [this]() {
         if (m_syncProcess && m_syncProcess->state() != QProcess::NotRunning) {
@@ -1329,17 +1436,39 @@ void MainWindow::startSyncMarketData()
         m_syncDataBtn->setEnabled(false);
     }
 
-#ifdef Q_OS_WIN
-    const QString program = QStringLiteral("python");
-#else
-    const QString program = QStringLiteral("python3");
-#endif
-
+    QString program;
     QStringList args;
-    args << QStringLiteral("-u")
-         << scriptPath
-         << QStringLiteral("--workers")
-         << QStringLiteral("6");
+
+    if (usePackagedSyncExe) {
+        program = packagedSyncExe;
+    } else {
+    #ifdef Q_OS_WIN
+        const QString venvPython = QDir(appDir)
+            .filePath(QStringLiteral(".venv/Scripts/python.exe"));
+    
+        if (QFileInfo::exists(venvPython)) {
+            program = venvPython;
+        } else {
+            program = QStringLiteral("python");
+        }
+    #else
+        const QString venvPython = QDir(appDir)
+            .filePath(QStringLiteral(".venv/bin/python3"));
+    
+        if (QFileInfo::exists(venvPython)) {
+            program = venvPython;
+        } else {
+            program = QStringLiteral("python3");
+        }
+    #endif
+    
+        args << QStringLiteral("-u")
+             << scriptPath;
+    }
+
+    //修改线程数
+    args << QStringLiteral("--workers")
+         << QStringLiteral("20");   
 
     m_syncProcess->start(program, args);
 
@@ -1358,8 +1487,9 @@ void MainWindow::startSyncMarketData()
         m_syncProcess = nullptr;
 
         QMessageBox::warning(this,
-                             QStringLiteral("启动失败"),
-                             QStringLiteral("无法启动 Python。请确认已经安装 Python，并且 python 命令已加入 PATH。"));
+                     QStringLiteral("启动失败"),
+                     QStringLiteral("无法启动 Python：\n%1\n\n请确认项目 .venv 是否存在，或者 python 命令是否可用。")
+                         .arg(program));
     }
 }
 
@@ -1408,6 +1538,7 @@ void MainWindow::handleSyncProcessErrorOutput()
 
         if (!line.isEmpty()) {
             qWarning() << "[sync stderr]" << line;
+            m_syncLastErrorText += line + QStringLiteral("\n");
         }
     }
 }
@@ -1415,6 +1546,20 @@ void MainWindow::handleSyncProcessErrorOutput()
 void MainWindow::handleSyncProgressLine(const QString &line)
 {
     if (!m_syncProgress) {
+        return;
+    }
+
+    if (line.startsWith(QStringLiteral("ERROR|"))) {
+        const QString message = line.mid(QStringLiteral("ERROR|").length()).trimmed();
+
+        if (!message.isEmpty()) {
+            m_syncLastErrorText += message + QStringLiteral("\n");
+        }
+
+        m_syncProgress->setLabelText(
+            QStringLiteral("同步失败：%1").arg(message.left(160))
+        );
+
         return;
     }
 
@@ -1511,16 +1656,29 @@ void MainWindow::refreshCurrentSymbolAfterSync()
 
 void MainWindow::finishSyncMarketData(int exitCode, int exitStatus)
 {
-    Q_UNUSED(exitStatus);
+    const bool ok = (exitCode == 0 && exitStatus == static_cast<int>(QProcess::NormalExit));
 
     if (m_syncDataBtn) {
         m_syncDataBtn->setEnabled(true);
     }
 
-    const bool ok = (exitCode == 0);
+    if (m_syncProcess) {
+        const QString remainStdout = QString::fromUtf8(m_syncProcess->readAllStandardOutput()).trimmed();
+        if (!remainStdout.isEmpty()) {
+            const QStringList lines = remainStdout.split('\n');
+            for (const QString &line : lines) {
+                handleSyncProgressLine(line.trimmed());
+            }
+        }
+
+        const QString remainStderr = QString::fromUtf8(m_syncProcess->readAllStandardError()).trimmed();
+        if (!remainStderr.isEmpty()) {
+            m_syncLastErrorText += remainStderr + QStringLiteral("\n");
+        }
+    }
 
     if (m_syncProgress) {
-        if (m_syncProgress->maximum() > 0) {
+        if (ok && m_syncProgress->maximum() > 0) {
             m_syncProgress->setValue(m_syncProgress->maximum());
         }
 
@@ -1535,18 +1693,35 @@ void MainWindow::finishSyncMarketData(int exitCode, int exitStatus)
     }
 
     if (ok) {
-    initDefaultMatchResults();
-    sortMatchResults();
-    refreshMatchResults();
+        initDefaultMatchResults();
+        sortMatchResults();
+        refreshMatchResults();
 
-    refreshCurrentSymbolAfterSync();
+        refreshCurrentSymbolAfterSync();
 
-    QCoreApplication::processEvents();
+        QCoreApplication::processEvents();
 
-    QMessageBox::information(this,
-                             QStringLiteral("同步完成"),
-                             QStringLiteral("股票数据同步完成，界面已刷新。"));
-}
+        QMessageBox::information(this,
+                                 QStringLiteral("同步完成"),
+                                 QStringLiteral("股票数据同步完成，界面已刷新。"));
+        return;
+    }
+
+    QString errorText = m_syncLastErrorText.trimmed();
+
+    if (errorText.isEmpty()) {
+        errorText = QStringLiteral("Python 同步脚本异常退出，exitCode=%1，exitStatus=%2。")
+                        .arg(exitCode)
+                        .arg(exitStatus);
+    }
+
+    if (errorText.length() > 1500) {
+        errorText = errorText.left(1500) + QStringLiteral("\n...");
+    }
+
+    QMessageBox::warning(this,
+                         QStringLiteral("同步失败"),
+                         QStringLiteral("股票数据同步失败。\n\n错误信息：\n%1").arg(errorText));
 }
 
 QString MainWindow::findSyncMarketDataScript() const
