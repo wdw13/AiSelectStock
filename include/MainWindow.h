@@ -5,6 +5,7 @@
 #include <QFrame>
 #include <QHBoxLayout>
 #include "data/DataBase.h"
+#include "alg/StockSelectorAlg.h"
 
 class QPushButton;
 class QEvent;
@@ -42,7 +43,7 @@ private:
     {
         Ai,
         Traditional,
-        BsExclusive
+        Custom
     };
     struct MatchStockResult
     {
@@ -87,12 +88,14 @@ private:
     void refreshCurrentSymbolAfterSync();
 
     void showStockSelectDialog();
-    void runStockSelect(StockSelectMode mode);
+    void runStockSelect(StockSelectMode mode, const CustomSelectConfig &customConfig = CustomSelectConfig());
 
     // 这两个就是后面接真实 AI选股 / 传统选股 的预留接口
     QVector<MatchStockResult> requestAiSelectResults(QProgressDialog *progressDialog = nullptr);
     QVector<MatchStockResult> requestTraditionalSelectResults(QProgressDialog *progressDialog = nullptr);
-    QVector<MatchStockResult> requestBsSelectResults(QProgressDialog *progressDialog = nullptr);
+    QVector<MatchStockResult> requestCustomSelectResults(QProgressDialog *progressDialog,
+                                                     const CustomSelectConfig &config);
+    bool showCustomSelectConfigDialog(CustomSelectConfig *config);
 
     MatchStockResult buildMatchResult(const QString &code, const QString &name, double score) const;
 
@@ -129,4 +132,6 @@ private:
     QString m_syncOutputBuffer;
     QString m_syncErrorBuffer;
     QString m_syncLastErrorText;
+
+    CustomSelectConfig m_lastCustomSelectConfig;
 };

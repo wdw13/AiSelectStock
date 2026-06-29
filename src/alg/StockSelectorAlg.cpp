@@ -216,6 +216,28 @@ static bool hasRecentLimitUp(const QVector<KLineData> &bars, int days)
     return false;
 }
 
+static int limitUpCountInLast(const QVector<KLineData> &bars, int days)
+{
+    const int n = static_cast<int>(bars.size());
+    const int start = std::max(1, n - days);
+
+    int count = 0;
+
+    for (int i = start; i < n; ++i) {
+        if (bars[i - 1].close <= 0.0) {
+            continue;
+        }
+
+        const double pct = (bars[i].close - bars[i - 1].close) / bars[i - 1].close * 100.0;
+
+        if (pct >= 9.5) {
+            ++count;
+        }
+    }
+
+    return count;
+}
+
 static bool isShortBottomRecovered(const QVector<KLineData> &bars)
 {
     const int n = static_cast<int>(bars.size());
@@ -705,9 +727,10 @@ bool StockSelectorAlg::evaluateTraditionalStock(const StockItem &stock,
     return true;
 }
 
-bool StockSelectorAlg::evaluateBsStock(const StockItem &stock,
-                                       const QVector<KLineData> &bars,
-                                       StockSelectAlgResult *out)
+bool StockSelectorAlg::evaluateCustomStock(const StockItem &stock,
+                                           const QVector<KLineData> &bars,
+                                           const CustomSelectConfig &config,
+                                           StockSelectAlgResult *out)
 {
     if (!out) {
         return false;
@@ -723,62 +746,210 @@ bool StockSelectorAlg::evaluateBsStock(const StockItem &stock,
         return false;
     }
 
-    const bool bottomRecovered = isShortBottomRecovered(bars);
-    const bool alongMa5 = isPriceRisingAlongMa5(bars);
-    const bool maUpNoCross = isMa5Ma10Ma20UpWithoutCross(bars);
-    const bool recentLimitUp = hasRecentLimitUp(bars, 20);
-    const bool weeklyMacdUp = isWeeklyMacdUpTrend(bars);
-
-    if (!(bottomRecovered &&
-          alongMa5 &&
-          maUpNoCross &&
-          recentLimitUp &&
-          weeklyMacdUp)) {
-        return false;
-    }
+    int enabledCount = 0;
+    QStringList reasons;
 
     const double ma5 = averageClose(bars, 5);
     const double ma10 = averageClose(bars, 10);
     const double ma20 = averageClose(bars, 20);
 
+    const double prevMa5 = averageClose(bars, 5, 1);
+    const double prevMa10 = averageClose(bars, 10, 1);
+    const double prevMa20 = averageClose(bars, 20, 1);
+
     const double ret20 = pctChangeFromDaysAgo(bars, 20);
     const double drawdown60 = maxDrawdownInLast(bars, 60);
-    const double volatility30 = volatilityInLast(bars, 30);
 
-    double score = 80.0;
+    const double volumeMa5 = averageVolume(bars, 5);
+    const double volumeMa20 = averageVolume(bars, 20);
+    const double volumeRatio = volumeMa20 > 0.0 ? volumeMa5 / volumeMa20 : 0.0;
 
-    // 越贴近 5 日线，越符合“沿 5 日线逐步上涨”
-    if (ma5 > 0.0) {
-        const double distanceToMa5 = std::abs(last.close - ma5) / ma5 * 100.0;
+    if (config.enableRecentLimitUp) {
+        ++enabledCount;
 
-        if (distanceToMa5 <= 3.0) {
-            score += 8.0;
-        } else if (distanceToMa5 <= 6.0) {
-            score += 4.0;
-        } else {
-            score -= 5.0;
+        const int count = limitUpCountInLast(bars, config.limitUpLookbackDays);
+
+        if (count < config.limitUpMinCount) {
+            return false;
         }
+
+        reasons << QStringLiteral("%1日内涨停%2次")
+                       .arg(config.limitUpLookbackDays)
+                       .arg(count);
     }
 
-    // 三条均线越顺，分数越高
+    if (config.enableMaLongOrder) {
+        ++enabledCount;
+
+        if (!(ma5 > ma10 && ma10 > ma20)) {
+            return false;
+        }
+
+        reasons << QStringLiteral("MA5 > MA10 > MA20");
+    }
+
+    if (config.enableMaUp) {
+        ++enabledCount;
+
+        if (!(ma5 > prevMa5 && ma10 > prevMa10 && ma20 > prevMa20)) {
+            return false;
+        }
+
+        reasons << QStringLiteral("MA5/10/20 均线向上");
+    }
+
+    if (config.enablePriceAboveMa5) {
+        ++enabledCount;
+
+        if (!(last.close > ma5)) {
+            return false;
+        }
+
+        reasons << QStringLiteral("收盘价站上MA5");
+    }
+
+    if (config.enableAlongMa5) {
+        ++enabledCount;
+
+        const int n = static_cast<int>(bars.size());
+        int aboveCount = 0;
+
+        const int days = std::max(1, config.alongMa5Days);
+        const int start = std::max(0, n - days);
+
+        for (int i = start; i < n; ++i) {
+            const double curMa5 = averageCloseAt(bars, 5, i);
+
+            if (curMa5 <= 0.0) {
+                continue;
+            }
+
+            const double distance = std::abs(bars[i].close - curMa5) / curMa5 * 100.0;
+
+            if (bars[i].close >= curMa5 || distance <= 2.0) {
+                ++aboveCount;
+            }
+        }
+
+        if (aboveCount < config.alongMa5MinDays) {
+            return false;
+        }
+
+        reasons << QStringLiteral("沿5日线上涨");
+    }
+
+    if (config.enableShortBottom) {
+        ++enabledCount;
+
+        const int n = static_cast<int>(bars.size());
+        const int lookback = std::max(5, config.bottomLookbackDays);
+        const int start = std::max(0, n - lookback);
+
+        double bottomLow = bars[start].low;
+        int bottomIndex = start;
+
+        for (int i = start; i < n; ++i) {
+            if (bars[i].low < bottomLow) {
+                bottomLow = bars[i].low;
+                bottomIndex = i;
+            }
+        }
+
+        const int bottomOffset = n - 1 - bottomIndex;
+
+        if (bottomLow <= 0.0) {
+            return false;
+        }
+
+        const double recoverPct = (last.close - bottomLow) / bottomLow * 100.0;
+
+        if (bottomOffset < 3 || recoverPct < config.bottomMinRecoverPct || recoverPct > config.bottomMaxRecoverPct) {
+            return false;
+        }
+
+        reasons << QStringLiteral("短期底部反弹%1%").arg(recoverPct, 0, 'f', 1);
+    }
+
+    if (config.enableWeeklyMacdUp) {
+        ++enabledCount;
+
+        if (!isWeeklyMacdUpTrend(bars)) {
+            return false;
+        }
+
+        reasons << QStringLiteral("周线MACD上涨");
+    }
+
+    if (config.enableRet20Max) {
+        ++enabledCount;
+
+        if (ret20 > config.ret20MaxPct) {
+            return false;
+        }
+
+        reasons << QStringLiteral("20日涨幅不超过%1%").arg(config.ret20MaxPct, 0, 'f', 1);
+    }
+
+    if (config.enableTurnoverRange) {
+        ++enabledCount;
+
+        if (last.turnover < config.turnoverMin || last.turnover > config.turnoverMax) {
+            return false;
+        }
+
+        reasons << QStringLiteral("换手率在%1%-%2%")
+                       .arg(config.turnoverMin, 0, 'f', 1)
+                       .arg(config.turnoverMax, 0, 'f', 1);
+    }
+
+    if (config.enableAmountMin) {
+        ++enabledCount;
+
+        if (last.amount < config.amountMin) {
+            return false;
+        }
+
+        reasons << QStringLiteral("成交额大于%1万").arg(config.amountMin / 10000.0, 0, 'f', 0);
+    }
+
+    if (config.enableDrawdownMax) {
+        ++enabledCount;
+
+        if (drawdown60 > config.drawdownMaxPct) {
+            return false;
+        }
+
+        reasons << QStringLiteral("60日最大回撤不超过%1%").arg(config.drawdownMaxPct, 0, 'f', 1);
+    }
+
+    if (config.enableVolumeRatioRange) {
+        ++enabledCount;
+
+        if (volumeRatio < config.volumeRatioMin || volumeRatio > config.volumeRatioMax) {
+            return false;
+        }
+
+        reasons << QStringLiteral("量比区间%1-%2")
+                       .arg(config.volumeRatioMin, 0, 'f', 2)
+                       .arg(config.volumeRatioMax, 0, 'f', 2);
+    }
+
+    if (enabledCount <= 0) {
+        return false;
+    }
+
+    double score = 60.0 + enabledCount * 5.0;
+
     if (ma5 > ma10 && ma10 > ma20) {
         score += 5.0;
     }
 
-    // 近 20 日上涨不能过热
     if (ret20 > 0.0 && ret20 <= 25.0) {
         score += 5.0;
-    } else if (ret20 > 35.0) {
-        score -= 8.0;
     }
 
-    // 回撤和波动率控制
-    if (drawdown60 > 30.0) {
-        score -= 8.0;
-    }
-
-    if (volatility30 > 6.0) {
-        score -= 5.0;
+    if (drawdown60 < 25.0) {
+        score += 5.0;
     }
 
     score = std::clamp(score, 0.0, 100.0);
@@ -786,8 +957,8 @@ bool StockSelectorAlg::evaluateBsStock(const StockItem &stock,
     fillLastQuote(stock, bars, out);
 
     out->score = score;
-    out->strategyName = QStringLiteral("BS专属");
-    out->reason = QStringLiteral("短期底部反弹，沿5日线上行，MA5/10/20多头向上，近日涨停，周线MACD上行");
+    out->strategyName = QStringLiteral("自定义选股");
+    out->reason = reasons.join(QStringLiteral("，"));
 
     return true;
 }

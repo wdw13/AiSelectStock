@@ -39,6 +39,10 @@
 #include <QProcessEnvironment>
 #include <QProgressDialog>
 #include <QApplication>
+#include <QCheckBox>
+#include <QSpinBox>
+#include <QDoubleSpinBox>
+#include <QGroupBox>
 
 namespace
 {
@@ -977,6 +981,272 @@ void MainWindow::showResultFilterDialog()
     refreshMatchResults();
 }
 
+bool MainWindow::showCustomSelectConfigDialog(CustomSelectConfig *config)
+{
+    if (!config) {
+        return false;
+    }
+
+    QDialog dialog(this);
+    dialog.setWindowTitle(QStringLiteral("自定义选股指标"));
+    dialog.setModal(true);
+    dialog.resize(520, 620);
+
+    auto *mainLayout = new QVBoxLayout(&dialog);
+
+    auto *scrollArea = new QScrollArea(&dialog);
+    scrollArea->setWidgetResizable(true);
+
+    auto *content = new QWidget(scrollArea);
+    auto *form = new QFormLayout(content);
+    form->setContentsMargins(16, 16, 16, 16);
+    form->setSpacing(12);
+
+    auto *limitUpCheck = new QCheckBox(QStringLiteral("启用"), content);
+    limitUpCheck->setChecked(config->enableRecentLimitUp);
+
+    auto *limitUpDays = new QSpinBox(content);
+    limitUpDays->setRange(1, 120);
+    limitUpDays->setValue(config->limitUpLookbackDays);
+
+    auto *limitUpCount = new QSpinBox(content);
+    limitUpCount->setRange(1, 20);
+    limitUpCount->setValue(config->limitUpMinCount);
+
+    auto *limitUpWidget = new QWidget(content);
+    auto *limitUpLayout = new QHBoxLayout(limitUpWidget);
+    limitUpLayout->setContentsMargins(0, 0, 0, 0);
+    limitUpLayout->addWidget(limitUpCheck);
+    limitUpLayout->addWidget(new QLabel(QStringLiteral("最近"), content));
+    limitUpLayout->addWidget(limitUpDays);
+    limitUpLayout->addWidget(new QLabel(QStringLiteral("天内涨停至少"), content));
+    limitUpLayout->addWidget(limitUpCount);
+    limitUpLayout->addWidget(new QLabel(QStringLiteral("次"), content));
+
+    auto *maLongCheck = new QCheckBox(QStringLiteral("MA5 > MA10 > MA20"), content);
+    maLongCheck->setChecked(config->enableMaLongOrder);
+
+    auto *maUpCheck = new QCheckBox(QStringLiteral("MA5、MA10、MA20 均线向上"), content);
+    maUpCheck->setChecked(config->enableMaUp);
+
+    auto *priceAboveMa5Check = new QCheckBox(QStringLiteral("收盘价站上 MA5"), content);
+    priceAboveMa5Check->setChecked(config->enablePriceAboveMa5);
+
+    auto *alongMa5Check = new QCheckBox(QStringLiteral("启用"), content);
+    alongMa5Check->setChecked(config->enableAlongMa5);
+
+    auto *alongDays = new QSpinBox(content);
+    alongDays->setRange(1, 30);
+    alongDays->setValue(config->alongMa5Days);
+
+    auto *alongMinDays = new QSpinBox(content);
+    alongMinDays->setRange(1, 30);
+    alongMinDays->setValue(config->alongMa5MinDays);
+
+    auto *alongWidget = new QWidget(content);
+    auto *alongLayout = new QHBoxLayout(alongWidget);
+    alongLayout->setContentsMargins(0, 0, 0, 0);
+    alongLayout->addWidget(alongMa5Check);
+    alongLayout->addWidget(new QLabel(QStringLiteral("最近"), content));
+    alongLayout->addWidget(alongDays);
+    alongLayout->addWidget(new QLabel(QStringLiteral("天至少"), content));
+    alongLayout->addWidget(alongMinDays);
+    alongLayout->addWidget(new QLabel(QStringLiteral("天沿MA5"), content));
+
+    auto *bottomCheck = new QCheckBox(QStringLiteral("启用"), content);
+    bottomCheck->setChecked(config->enableShortBottom);
+
+    auto *bottomDays = new QSpinBox(content);
+    bottomDays->setRange(5, 120);
+    bottomDays->setValue(config->bottomLookbackDays);
+
+    auto *bottomMinRecover = new QDoubleSpinBox(content);
+    bottomMinRecover->setRange(0.0, 100.0);
+    bottomMinRecover->setDecimals(1);
+    bottomMinRecover->setValue(config->bottomMinRecoverPct);
+
+    auto *bottomMaxRecover = new QDoubleSpinBox(content);
+    bottomMaxRecover->setRange(0.0, 200.0);
+    bottomMaxRecover->setDecimals(1);
+    bottomMaxRecover->setValue(config->bottomMaxRecoverPct);
+
+    auto *bottomWidget = new QWidget(content);
+    auto *bottomLayout = new QHBoxLayout(bottomWidget);
+    bottomLayout->setContentsMargins(0, 0, 0, 0);
+    bottomLayout->addWidget(bottomCheck);
+    bottomLayout->addWidget(new QLabel(QStringLiteral("最近"), content));
+    bottomLayout->addWidget(bottomDays);
+    bottomLayout->addWidget(new QLabel(QStringLiteral("天底部反弹"), content));
+    bottomLayout->addWidget(bottomMinRecover);
+    bottomLayout->addWidget(new QLabel(QStringLiteral("% 到"), content));
+    bottomLayout->addWidget(bottomMaxRecover);
+    bottomLayout->addWidget(new QLabel(QStringLiteral("%"), content));
+
+    auto *weeklyMacdCheck = new QCheckBox(QStringLiteral("周线 MACD 处于上涨趋势"), content);
+    weeklyMacdCheck->setChecked(config->enableWeeklyMacdUp);
+
+    auto *ret20Check = new QCheckBox(QStringLiteral("启用"), content);
+    ret20Check->setChecked(config->enableRet20Max);
+
+    auto *ret20Max = new QDoubleSpinBox(content);
+    ret20Max->setRange(-100.0, 300.0);
+    ret20Max->setDecimals(1);
+    ret20Max->setValue(config->ret20MaxPct);
+
+    auto *ret20Widget = new QWidget(content);
+    auto *ret20Layout = new QHBoxLayout(ret20Widget);
+    ret20Layout->setContentsMargins(0, 0, 0, 0);
+    ret20Layout->addWidget(ret20Check);
+    ret20Layout->addWidget(new QLabel(QStringLiteral("近20日涨幅不超过"), content));
+    ret20Layout->addWidget(ret20Max);
+    ret20Layout->addWidget(new QLabel(QStringLiteral("%"), content));
+
+    auto *turnoverCheck = new QCheckBox(QStringLiteral("启用"), content);
+    turnoverCheck->setChecked(config->enableTurnoverRange);
+
+    auto *turnoverMin = new QDoubleSpinBox(content);
+    turnoverMin->setRange(0.0, 100.0);
+    turnoverMin->setDecimals(1);
+    turnoverMin->setValue(config->turnoverMin);
+
+    auto *turnoverMax = new QDoubleSpinBox(content);
+    turnoverMax->setRange(0.0, 100.0);
+    turnoverMax->setDecimals(1);
+    turnoverMax->setValue(config->turnoverMax);
+
+    auto *turnoverWidget = new QWidget(content);
+    auto *turnoverLayout = new QHBoxLayout(turnoverWidget);
+    turnoverLayout->setContentsMargins(0, 0, 0, 0);
+    turnoverLayout->addWidget(turnoverCheck);
+    turnoverLayout->addWidget(new QLabel(QStringLiteral("换手率"), content));
+    turnoverLayout->addWidget(turnoverMin);
+    turnoverLayout->addWidget(new QLabel(QStringLiteral("% 到"), content));
+    turnoverLayout->addWidget(turnoverMax);
+    turnoverLayout->addWidget(new QLabel(QStringLiteral("%"), content));
+
+    auto *amountCheck = new QCheckBox(QStringLiteral("启用"), content);
+    amountCheck->setChecked(config->enableAmountMin);
+
+    auto *amountMin = new QDoubleSpinBox(content);
+    amountMin->setRange(0.0, 10000000.0);
+    amountMin->setDecimals(0);
+    amountMin->setValue(config->amountMin / 10000.0);
+
+    auto *amountWidget = new QWidget(content);
+    auto *amountLayout = new QHBoxLayout(amountWidget);
+    amountLayout->setContentsMargins(0, 0, 0, 0);
+    amountLayout->addWidget(amountCheck);
+    amountLayout->addWidget(new QLabel(QStringLiteral("成交额不少于"), content));
+    amountLayout->addWidget(amountMin);
+    amountLayout->addWidget(new QLabel(QStringLiteral("万元"), content));
+
+    auto *drawdownCheck = new QCheckBox(QStringLiteral("启用"), content);
+    drawdownCheck->setChecked(config->enableDrawdownMax);
+
+    auto *drawdownMax = new QDoubleSpinBox(content);
+    drawdownMax->setRange(0.0, 100.0);
+    drawdownMax->setDecimals(1);
+    drawdownMax->setValue(config->drawdownMaxPct);
+
+    auto *drawdownWidget = new QWidget(content);
+    auto *drawdownLayout = new QHBoxLayout(drawdownWidget);
+    drawdownLayout->setContentsMargins(0, 0, 0, 0);
+    drawdownLayout->addWidget(drawdownCheck);
+    drawdownLayout->addWidget(new QLabel(QStringLiteral("60日最大回撤不超过"), content));
+    drawdownLayout->addWidget(drawdownMax);
+    drawdownLayout->addWidget(new QLabel(QStringLiteral("%"), content));
+
+    auto *volumeRatioCheck = new QCheckBox(QStringLiteral("启用"), content);
+    volumeRatioCheck->setChecked(config->enableVolumeRatioRange);
+
+    auto *volumeRatioMin = new QDoubleSpinBox(content);
+    volumeRatioMin->setRange(0.0, 20.0);
+    volumeRatioMin->setDecimals(2);
+    volumeRatioMin->setValue(config->volumeRatioMin);
+
+    auto *volumeRatioMax = new QDoubleSpinBox(content);
+    volumeRatioMax->setRange(0.0, 20.0);
+    volumeRatioMax->setDecimals(2);
+    volumeRatioMax->setValue(config->volumeRatioMax);
+
+    auto *volumeRatioWidget = new QWidget(content);
+    auto *volumeRatioLayout = new QHBoxLayout(volumeRatioWidget);
+    volumeRatioLayout->setContentsMargins(0, 0, 0, 0);
+    volumeRatioLayout->addWidget(volumeRatioCheck);
+    volumeRatioLayout->addWidget(new QLabel(QStringLiteral("5日均量/20日均量"), content));
+    volumeRatioLayout->addWidget(volumeRatioMin);
+    volumeRatioLayout->addWidget(new QLabel(QStringLiteral("到"), content));
+    volumeRatioLayout->addWidget(volumeRatioMax);
+
+    form->addRow(QStringLiteral("涨停次数："), limitUpWidget);
+    form->addRow(QStringLiteral("均线多头："), maLongCheck);
+    form->addRow(QStringLiteral("均线向上："), maUpCheck);
+    form->addRow(QStringLiteral("站上MA5："), priceAboveMa5Check);
+    form->addRow(QStringLiteral("沿5日线："), alongWidget);
+    form->addRow(QStringLiteral("短期底部："), bottomWidget);
+    form->addRow(QStringLiteral("周线MACD："), weeklyMacdCheck);
+    form->addRow(QStringLiteral("20日涨幅："), ret20Widget);
+    form->addRow(QStringLiteral("换手率："), turnoverWidget);
+    form->addRow(QStringLiteral("成交额："), amountWidget);
+    form->addRow(QStringLiteral("最大回撤："), drawdownWidget);
+    form->addRow(QStringLiteral("量能比例："), volumeRatioWidget);
+
+    content->setLayout(form);
+    scrollArea->setWidget(content);
+
+    auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
+    buttons->button(QDialogButtonBox::Ok)->setText(QStringLiteral("保存指标"));
+    buttons->button(QDialogButtonBox::Cancel)->setText(QStringLiteral("取消"));
+
+    connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+
+    mainLayout->addWidget(scrollArea);
+    mainLayout->addWidget(buttons);
+
+    if (dialog.exec() != QDialog::Accepted) {
+        return false;
+    }
+
+    config->enableRecentLimitUp = limitUpCheck->isChecked();
+    config->limitUpLookbackDays = limitUpDays->value();
+    config->limitUpMinCount = limitUpCount->value();
+
+    config->enableMaLongOrder = maLongCheck->isChecked();
+    config->enableMaUp = maUpCheck->isChecked();
+    config->enablePriceAboveMa5 = priceAboveMa5Check->isChecked();
+
+    config->enableAlongMa5 = alongMa5Check->isChecked();
+    config->alongMa5Days = alongDays->value();
+    config->alongMa5MinDays = alongMinDays->value();
+
+    config->enableShortBottom = bottomCheck->isChecked();
+    config->bottomLookbackDays = bottomDays->value();
+    config->bottomMinRecoverPct = bottomMinRecover->value();
+    config->bottomMaxRecoverPct = bottomMaxRecover->value();
+
+    config->enableWeeklyMacdUp = weeklyMacdCheck->isChecked();
+
+    config->enableRet20Max = ret20Check->isChecked();
+    config->ret20MaxPct = ret20Max->value();
+
+    config->enableTurnoverRange = turnoverCheck->isChecked();
+    config->turnoverMin = turnoverMin->value();
+    config->turnoverMax = turnoverMax->value();
+
+    config->enableAmountMin = amountCheck->isChecked();
+    config->amountMin = amountMin->value() * 10000.0;
+
+    config->enableDrawdownMax = drawdownCheck->isChecked();
+    config->drawdownMaxPct = drawdownMax->value();
+
+    config->enableVolumeRatioRange = volumeRatioCheck->isChecked();
+    config->volumeRatioMin = volumeRatioMin->value();
+    config->volumeRatioMax = volumeRatioMax->value();
+
+    return true;
+}
+
 void MainWindow::showStockSelectDialog()
 {
     QDialog dialog(this);
@@ -1001,11 +1271,23 @@ void MainWindow::showStockSelectDialog()
 
     auto *aiRadio = new QRadioButton(QStringLiteral("AI选股"), &dialog);
     auto *traditionalRadio = new QRadioButton(QStringLiteral("传统选股"), &dialog);
-    auto *bsRadio = new QRadioButton(QStringLiteral("BS专属"), &dialog);
+    auto *customRadio = new QRadioButton(QStringLiteral("自定义选股"), &dialog);
+    auto *customSettingBtn = new QPushButton(QStringLiteral("设置指标"), &dialog);
+
+    auto *selectGroup = new QButtonGroup(&dialog);
+    selectGroup->setExclusive(true);
+    selectGroup->addButton(aiRadio);
+    selectGroup->addButton(traditionalRadio);
+    selectGroup->addButton(customRadio);
     aiRadio->setChecked(true);
 
-    aiRadio->setStyleSheet("font: 600 15px 'Microsoft YaHei'; color: #2d3138;");
-    traditionalRadio->setStyleSheet("font: 600 15px 'Microsoft YaHei'; color: #2d3138;");
+    const QString radioStyle = QStringLiteral(
+        "font: 600 15px 'Microsoft YaHei'; color: #2d3138;"
+    );
+
+    aiRadio->setStyleSheet(radioStyle);
+    traditionalRadio->setStyleSheet(radioStyle);
+    customRadio->setStyleSheet(radioStyle);
 
     auto *buttons = new QDialogButtonBox(
         QDialogButtonBox::Ok | QDialogButtonBox::Cancel,
@@ -1017,13 +1299,26 @@ void MainWindow::showStockSelectDialog()
 
     connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
     connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    CustomSelectConfig customConfig = m_lastCustomSelectConfig;
+
+    connect(customSettingBtn, &QPushButton::clicked, this, [&]() {
+        customRadio->setChecked(true);
+        showCustomSelectConfigDialog(&customConfig);
+    });
 
     layout->addWidget(title);
     layout->addWidget(desc);
     layout->addSpacing(4);
     layout->addWidget(aiRadio);
     layout->addWidget(traditionalRadio);
-    layout->addWidget(bsRadio);
+    auto *customRow = new QWidget(&dialog);
+    auto *customRowLayout = new QHBoxLayout(customRow);
+    customRowLayout->setContentsMargins(0, 0, 0, 0);
+    customRowLayout->addWidget(customRadio);
+    customRowLayout->addStretch();
+    customRowLayout->addWidget(customSettingBtn);
+
+    layout->addWidget(customRow);
     layout->addStretch();
     layout->addWidget(buttons);
 
@@ -1058,23 +1353,27 @@ void MainWindow::showStockSelectDialog()
 
     if (aiRadio->isChecked()) {
         mode = StockSelectMode::Ai;
-    } else if (bsRadio->isChecked()) {
-        mode = StockSelectMode::BsExclusive;
+    } else if (customRadio->isChecked()) {
+        mode = StockSelectMode::Custom;
     } else {
         mode = StockSelectMode::Traditional;
     }
 
-    runStockSelect(mode);
+    if (mode == StockSelectMode::Custom) {
+        m_lastCustomSelectConfig = customConfig;
+    }
+
+    runStockSelect(mode, customConfig);
 }
 
-void MainWindow::runStockSelect(StockSelectMode mode)
+void MainWindow::runStockSelect(StockSelectMode mode, const CustomSelectConfig &customConfig)
 {
     QString title;
 
     if (mode == StockSelectMode::Ai) {
         title = QStringLiteral("AI选股");
-    } else if (mode == StockSelectMode::BsExclusive) {
-        title = QStringLiteral("BS专属");
+    } else if (mode == StockSelectMode::Custom) {
+        title = QStringLiteral("自定义选股");
     } else {
         title = QStringLiteral("传统选股");
     }
@@ -1096,8 +1395,8 @@ void MainWindow::runStockSelect(StockSelectMode mode)
 
     if (mode == StockSelectMode::Ai) {
         m_matchResults = requestAiSelectResults(&progressDialog);
-    } else if (mode == StockSelectMode::BsExclusive) {
-        m_matchResults = requestBsSelectResults(&progressDialog);
+    } else if (mode == StockSelectMode::Custom) {
+        m_matchResults = requestCustomSelectResults(&progressDialog, customConfig);
     } else {
         m_matchResults = requestTraditionalSelectResults(&progressDialog);
     }
@@ -1254,7 +1553,8 @@ QVector<MainWindow::MatchStockResult> MainWindow::requestTraditionalSelectResult
     return results;
 }
 
-QVector<MainWindow::MatchStockResult> MainWindow::requestBsSelectResults(QProgressDialog *progressDialog)
+QVector<MainWindow::MatchStockResult> MainWindow::requestCustomSelectResults(QProgressDialog *progressDialog,
+                                                                             const CustomSelectConfig &config)
 {
     QVector<MatchStockResult> results;
 
@@ -1268,7 +1568,7 @@ QVector<MainWindow::MatchStockResult> MainWindow::requestBsSelectResults(QProgre
     if (progressDialog) {
         progressDialog->setRange(0, total);
         progressDialog->setValue(0);
-        progressDialog->setLabelText(QStringLiteral("正在进行 BS专属选股..."));
+        progressDialog->setLabelText(QStringLiteral("正在进行自定义选股..."));
         QApplication::processEvents();
     }
 
@@ -1280,7 +1580,7 @@ QVector<MainWindow::MatchStockResult> MainWindow::requestBsSelectResults(QProgre
 
         if (progressDialog) {
             progressDialog->setValue(i);
-            progressDialog->setLabelText(QStringLiteral("BS专属选股中：%1 / %2\n正在分析：%3 %4")
+            progressDialog->setLabelText(QStringLiteral("自定义选股中：%1 / %2\n正在分析：%3 %4")
                                              .arg(i + 1)
                                              .arg(total)
                                              .arg(stock.code)
@@ -1292,14 +1592,14 @@ QVector<MainWindow::MatchStockResult> MainWindow::requestBsSelectResults(QProgre
 
         StockSelectAlgResult algResult;
 
-        if (StockSelectorAlg::evaluateBsStock(stock, bars, &algResult)) {
+        if (StockSelectorAlg::evaluateCustomStock(stock, bars, config, &algResult)) {
             algResults.push_back(algResult);
         }
     }
 
     if (progressDialog) {
         progressDialog->setValue(total);
-        progressDialog->setLabelText(QStringLiteral("BS专属选股计算完成，正在排序..."));
+        progressDialog->setLabelText(QStringLiteral("自定义选股计算完成，正在排序..."));
         QApplication::processEvents();
     }
 
